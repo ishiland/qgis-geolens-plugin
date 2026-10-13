@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import re
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Callable, Iterable
@@ -32,6 +33,32 @@ def _plugin_version() -> str:
 # with 403 before the request reaches GeoLens; a named agent also lets server
 # operators recognize plugin traffic in their logs.
 USER_AGENT = f"qgis-geolens-plugin/{_plugin_version()}"
+
+
+# A signed scope is "<table>:p<N>", with a leading "<tenant>:" on multi-tenant
+# servers. Only the table belongs in the tile path; N rides along as `pv`.
+_PUBLICATION_SUFFIX_RE = re.compile(r":p(\d+)$")
+
+
+def parse_tile_scope(scope: str) -> tuple[str, str | None]:
+    """Split a signed tile scope into its table name and publication version."""
+    match = _PUBLICATION_SUFFIX_RE.search(scope)
+    version = match[1] if match else None
+    bare = scope[: match.start()] if match else scope
+    return bare.rsplit(":", 1)[-1], version
+
+
+def refresh_delay_seconds(expires_in: Any) -> int:
+    """Seconds to wait before re-minting a tile token that lasts `expires_in`.
+
+    Tokens live anywhere from about a minute to 16 minutes, so the delay is
+    derived from each token rather than fixed.
+    """
+    try:
+        lifetime = int(expires_in)
+    except (TypeError, ValueError):
+        lifetime = 60
+    return max(10, lifetime - 30)
 
 
 @dataclass(frozen=True)
@@ -131,13 +158,15 @@ class GeoLensClient:
         required = ("sig", "exp", "scope")
         if not all(body.get(key) is not None for key in required):
             raise GeoLensError("GeoLens vector tile response was malformed")
-        table = "data." + str(body["scope"])
-        query = urlencode(
-            {"sig": body["sig"], "exp": body["exp"], "scope": body["scope"]}
-        )
+        table_name, publication_version = parse_tile_scope(str(body["scope"]))
+        table = "data." + table_name
+        params = {"sig": body["sig"], "exp": body["exp"], "scope": body["scope"]}
+        if publication_version is not None:
+            params["pv"] = publication_version
         return {
             **body,
-            "url": f"{self.base_url}/api/tiles/{table}/{{z}}/{{x}}/{{y}}.pbf?{query}",
+            "url": f"{self.base_url}/api/tiles/{table}/{{z}}/{{x}}/{{y}}.pbf?"
+            + urlencode(params),
             "source_layer": table,
         }
 

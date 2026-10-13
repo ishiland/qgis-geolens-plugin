@@ -39,7 +39,7 @@ from qgis.core import (
     QgsVectorTileLayer,
 )
 
-from ..client import Dataset, GeoLensClient, GeoLensError
+from ..client import Dataset, GeoLensClient, GeoLensError, refresh_delay_seconds
 
 ROLE_DATASET = Qt.ItemDataRole.UserRole
 # QgsJsonExporter writes six decimal places by default (RFC 7946).
@@ -260,8 +260,8 @@ class GeoLensDock(QDockWidget):
 
     def _uri(self, source):
         # Never put an API key in a layer URI: QGIS persists layer sources in
-        # project files. Private datasets should be connected through a
-        # user-managed QGIS Authentication configuration.
+        # project files. The URL carries a short-lived signed tile token
+        # instead, which _schedule_refresh keeps renewed.
         uri = QgsDataSourceUri()
         uri.setParam("type", "xyz")
         uri.setParam("url", source["url"])
@@ -284,6 +284,7 @@ class GeoLensDock(QDockWidget):
             raise GeoLensError("QGIS could not create the GeoLens raster tile layer")
         self._tag_layer(layer, dataset)
         QgsProject.instance().addMapLayer(layer)
+        self._schedule_refresh(layer, dataset, source, "wms")
         self._zoom_to(dataset)
         self._message(f"Added raster tiles: {dataset.title}")
 
@@ -294,12 +295,12 @@ class GeoLensDock(QDockWidget):
         self._tag_layer(layer, dataset)
         layer.setCustomProperty("geolens/source_layer", source.get("source_layer", ""))
         QgsProject.instance().addMapLayer(layer)
-        self._schedule_refresh(layer, dataset, source)
+        self._schedule_refresh(layer, dataset, source, "vectortile")
         self._zoom_to(dataset)
         self._message(f"Added vector tiles: {dataset.title}")
 
-    def _schedule_refresh(self, layer, dataset, source):
-        seconds = max(10, int(source.get("expires_in") or 60) - 30)
+    def _schedule_refresh(self, layer, dataset, source, provider):
+        seconds = refresh_delay_seconds(source.get("expires_in"))
         timer = QTimer(self)
         timer.setSingleShot(True)
 
@@ -308,8 +309,8 @@ class GeoLensDock(QDockWidget):
                 return
             try:
                 renewed = self.client.tile_source(dataset.id)
-                layer.setDataSource(self._uri(renewed), layer.name(), "vectortile")
-                self._schedule_refresh(layer, dataset, renewed)
+                layer.setDataSource(self._uri(renewed), layer.name(), provider)
+                self._schedule_refresh(layer, dataset, renewed, provider)
             except GeoLensError:
                 timer.start(60_000)
 
