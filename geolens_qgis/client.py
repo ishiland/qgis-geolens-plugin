@@ -28,10 +28,9 @@ def _plugin_version() -> str:
     return "unknown"
 
 
-# Sent on every request. Without it, urllib announces itself as
-# "Python-urllib/x.y", which common WAF/bot-mitigation rules block outright
-# with 403 before the request reaches GeoLens; a named agent also lets server
-# operators recognize plugin traffic in their logs.
+# Without it, the plain urllib opener announces itself as "Python-urllib/x.y",
+# which common WAF/bot-mitigation rules block outright with 403 before the
+# request reaches GeoLens. QGIS networking replaces it with QGIS's own agent.
 USER_AGENT = f"qgis-geolens-plugin/{_plugin_version()}"
 
 
@@ -147,7 +146,7 @@ class GeoLensClient:
         """
         try:
             body = self._request("/api/capabilities")
-        except GeoLensError:
+        except (GeoLensError, ValueError):
             body = None
         if isinstance(body, dict):
             flags = body.get("flags")
@@ -159,7 +158,7 @@ class GeoLensClient:
             }
         try:
             flags = self._request("/api/settings/feature-flags/")
-        except GeoLensError:
+        except (GeoLensError, ValueError):
             flags = None
         editing = isinstance(flags, dict) and flags.get("enable_dataset_editing")
         return {

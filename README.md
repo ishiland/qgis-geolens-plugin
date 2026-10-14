@@ -50,7 +50,8 @@ authentication database, encrypted with the QGIS master password. Earlier
 versions could keep the key in plain text in the profile settings; opening the
 GeoLens panel moves such a key into the authentication database and deletes
 the plain-text copy. If that move fails or you cancel the master password
-prompt, the key stays where it was and the panel tries again next time. No key
+prompt, the key stays where it was and the panel tries again in your next QGIS
+session. No key
 is written to a layer source or a project file.
 
 Private vector and raster tiles load with a short-lived signed token that the

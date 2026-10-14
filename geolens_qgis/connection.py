@@ -78,11 +78,13 @@ class QgisTransport:
             applied, network_request = manager.updateNetworkRequest(
                 network_request, self.authcfg
             )
-            if not applied:
+            if not applied or not _carries_credential(network_request):
                 raise GeoLensError(
-                    "The selected QGIS authentication configuration could not "
-                    "be used. Check it in Settings > Options > Authentication."
+                    "The selected QGIS authentication configuration can't be "
+                    "used with GeoLens. Choose an API Header configuration that "
+                    "sends X-Api-Key."
                 )
+        credential = _carries_credential(network_request)
         blocking = QgsBlockingNetworkRequest()
         if self.upload_progress is not None:
             blocking.uploadProgress.connect(self.upload_progress)
@@ -105,6 +107,14 @@ class QgisTransport:
         else:
             raise ValueError(f"Unsupported HTTP method {method}")
         reply = blocking.reply()
+        # The redirected request went out without the credential, so its
+        # answer is what an anonymous caller sees.
+        final = urlparse(reply.request().url().toString())
+        if credential and final.hostname and reply.request().url() != QUrl(url):
+            raise GeoLensError(
+                f"GeoLens redirected the request to {final.scheme}://"
+                f"{final.hostname}. Update the server URL to match."
+            )
         body = bytes(reply.content())
         status = reply.attribute(QNetworkRequest.Attribute.HttpStatusCodeAttribute)
         if isinstance(status, int) and status >= 400:
@@ -112,6 +122,12 @@ class QgisTransport:
         if error != QgsBlockingNetworkRequest.ErrorCode.NoError:
             raise OSError(blocking.errorMessage())
         return _Response(body)
+
+
+def _carries_credential(request: QNetworkRequest) -> bool:
+    if bytes(request.rawHeader(AUTH_HEADER.encode())).strip():
+        return True
+    return bytes(request.rawHeader(b"Authorization")).startswith(b"Bearer ")
 
 
 class GeoLensConnection:
@@ -178,8 +194,9 @@ def store_api_key(
 def migrate_plaintext_key(settings, notify, auth_manager=None) -> str:
     """Move a key saved in plain text by older versions into the QGIS auth database.
 
-    On success the new config id is saved as the selected config, the plain
-    text setting is deleted and the id is returned. On failure the plain text
+    On success the plain text setting is deleted, the new config becomes the
+    selected one unless the user already selected another, and its id is
+    returned. On failure the plain text
     key is kept so a later attempt can move it, and "" is returned.
     `notify(text, level)` reports progress in the message bar.
     """
@@ -199,11 +216,12 @@ def migrate_plaintext_key(settings, notify, auth_manager=None) -> str:
         notify(
             "Your GeoLens API key could not be moved into the QGIS "
             "authentication database, so it stays in the QGIS profile settings "
-            "for now. GeoLens will try again the next time this panel opens.",
+            "for now. GeoLens will try again in your next QGIS session.",
             Qgis.MessageLevel.Warning,
         )
         return ""
-    settings.setValue(AUTHCFG_SETTING, authcfg)
+    if not settings.value(AUTHCFG_SETTING, ""):
+        settings.setValue(AUTHCFG_SETTING, authcfg)
     settings.remove(LEGACY_KEY_SETTING)
     settings.sync()
     notify(

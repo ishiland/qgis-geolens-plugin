@@ -170,10 +170,8 @@ class GeoLensDock(QDockWidget):
     def _restore_settings(self):
         settings = QSettings()
         self.url_edit.setText(settings.value(SERVER_SETTING, "", str))
-        authcfg = migrate_plaintext_key(settings, self._message)
-        self.auth_select.setConfigId(
-            authcfg or settings.value(AUTHCFG_SETTING, "", str)
-        )
+        migrate_plaintext_key(settings, self._message)
+        self.auth_select.setConfigId(settings.value(AUTHCFG_SETTING, "", str))
         # A key that could not be moved yet still works for this session.
         self.key_edit.setText(settings.value(LEGACY_KEY_SETTING, "", str))
         self.limit.setValue(settings.value("geolens/feature_limit", 10000, int))

@@ -113,6 +113,16 @@ def test_requests_carry_the_selected_auth_config(auth_manager, server):
     assert server.keys_seen() == [TEST_KEY]
 
 
+def test_a_pasted_key_travels_with_the_request(server):
+    server.routes["/api/search/datasets/"] = _json({"features": []})
+    server.routes["/api/datasets/d/features/"] = _json({"id": 3})
+    client = GeoLensConnection(server.url, api_key=TEST_KEY).client
+    client.search()
+    assert client.create_feature("d", {"type": "Feature"}) == 3
+    assert server.keys_seen() == [TEST_KEY, TEST_KEY]
+    assert server.seen[1][2]["content-type"] == "application/json"
+
+
 def test_a_redirect_to_another_host_does_not_get_the_key(
     auth_manager, server, other_server
 ):
@@ -123,9 +133,36 @@ def test_a_redirect_to_another_host_does_not_get_the_key(
         b"",
     )
     authcfg = store_api_key(TEST_KEY, server.url, _quiet, "", auth_manager)
-    GeoLensConnection(server.url, authcfg=authcfg).client.search()
+    with pytest.raises(GeoLensError, match="redirected"):
+        GeoLensConnection(server.url, authcfg=authcfg).client.search()
     assert server.keys_seen() == [TEST_KEY]
     assert other_server.keys_seen() == [None]
+
+
+def test_a_redirect_is_refused_rather_than_answered_anonymously(server):
+    # The redirected request goes out without the key, so its answer would
+    # silently be the public catalog.
+    server.routes["/landed"] = _json({"features": []})
+    server.routes["/api/search/datasets/"] = (
+        307,
+        {"Location": server.url + "/landed"},
+        b"",
+    )
+    with pytest.raises(GeoLensError, match="redirected"):
+        GeoLensConnection(server.url, api_key=TEST_KEY).client.search()
+    assert server.keys_seen() == [TEST_KEY, None]
+
+
+def test_a_config_that_sends_no_api_key_is_refused(auth_manager, server):
+    server.routes["/api/search/datasets/"] = _json({"features": []})
+    config = QgsAuthMethodConfig("APIHeader")
+    config.setName("not GeoLens")
+    config.setConfig("X-Other", "value")
+    stored, config = auth_manager.storeAuthenticationConfig(config)
+    assert stored
+    with pytest.raises(GeoLensError, match="X-Api-Key"):
+        GeoLensConnection(server.url, authcfg=config.id()).client.search()
+    assert server.seen == []
 
 
 def test_an_unusable_auth_config_fails_instead_of_going_anonymous(auth_manager, server):
@@ -204,6 +241,8 @@ def test_migration_moves_the_key_and_deletes_the_plain_text(auth_manager, settin
     assert loaded
     assert config.method() == "APIHeader"
     assert config.configMap() == {"X-Api-Key": TEST_KEY}
+    # Name and URI are stored unencrypted.
+    assert TEST_KEY not in config.name() + config.uri()
     # The user hears about the master password prompt before the write
     # that triggers it, and every message is free of the key.
     notice, level = events[0]
@@ -221,6 +260,15 @@ def test_a_failed_or_cancelled_write_keeps_the_plain_text_key(settings):
     assert settings.value(LEGACY_KEY_SETTING) == TEST_KEY
     assert settings.value(AUTHCFG_SETTING) is None
     assert events[-1][1] == Qgis.MessageLevel.Warning
+
+
+def test_migration_keeps_a_config_the_user_already_selected(auth_manager, settings):
+    _legacy(settings)
+    settings.setValue(AUTHCFG_SETTING, "chosen1")
+    authcfg = migrate_plaintext_key(settings, _quiet, auth_manager)
+    assert authcfg
+    assert settings.value(LEGACY_KEY_SETTING) is None
+    assert settings.value(AUTHCFG_SETTING) == "chosen1"
 
 
 def test_a_key_the_database_does_not_hand_back_is_kept(settings):
@@ -342,3 +390,70 @@ def test_opening_the_dock_migrates_a_saved_key(
         assert dock.key_edit.text() == ""
     finally:
         dock.cleanup()
+
+
+def _recording_messages(dock):
+    messages = []
+    show = dock._message
+
+    def record(text, level=Qgis.MessageLevel.Info):
+        messages.append(text)
+        show(text, level)
+
+    dock._message = record
+    return messages
+
+
+def test_saving_a_pasted_key_stores_it_only_in_the_auth_database(
+    qgis_iface, auth_manager, clean_profile_settings
+):
+    from geolens_qgis.dialogs import GeoLensDock
+
+    dock = GeoLensDock(qgis_iface, opener=_FakeGeoLens())
+    messages = _recording_messages(dock)
+    # A different key an earlier session could not move yet.
+    other = "glk_older_key_bbbbbbbbbbbbbbbbbbbb"  # pragma: allowlist secret
+    QSettings().setValue(LEGACY_KEY_SETTING, other)
+    try:
+        dock.url_edit.setText("https://gis.example.org")
+        dock.key_edit.setText(TEST_KEY)
+        dock.save_key.setChecked(True)
+        dock.connect_server()
+        profile = QSettings()
+        authcfg = profile.value(AUTHCFG_SETTING)
+        assert authcfg and dock.auth_select.configId() == authcfg
+        loaded, config = auth_manager.loadAuthenticationConfig(
+            authcfg, QgsAuthMethodConfig(), True
+        )
+        assert loaded and config.config("X-Api-Key") == TEST_KEY
+        assert profile.value(LEGACY_KEY_SETTING) == other
+        assert all(
+            TEST_KEY not in str(profile.value(name)) for name in profile.allKeys()
+        )
+        assert dock.key_edit.text() == ""
+        assert messages and not any(TEST_KEY in text for text in messages)
+    finally:
+        dock.cleanup()
+
+
+def test_a_cancelled_migration_keeps_the_key_through_the_session(
+    qgis_iface, auth_manager, clean_profile_settings
+):
+    from geolens_qgis.dialogs import GeoLensDock
+
+    _legacy(clean_profile_settings)
+    # Without a master password in memory, headless QGIS refuses the prompt
+    # the way a user cancelling it does.
+    auth_manager.clearMasterPassword()
+    dock = GeoLensDock(qgis_iface, opener=_FakeGeoLens())
+    try:
+        assert QSettings().value(LEGACY_KEY_SETTING) == TEST_KEY
+        assert QSettings().value(AUTHCFG_SETTING) is None
+        assert dock.key_edit.text() == TEST_KEY
+        dock.url_edit.setText("https://gis.example.org")
+        dock.connect_server()
+        assert dock.client is not None
+        assert QSettings().value(LEGACY_KEY_SETTING) == TEST_KEY
+    finally:
+        dock.cleanup()
+        assert auth_manager.setMasterPassword(MASTER, True)
