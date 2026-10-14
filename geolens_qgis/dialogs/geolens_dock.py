@@ -304,25 +304,30 @@ class GeoLensDock(QDockWidget):
         # renewals must keep asking the server that issued the layer.
         client = client or self.client
         seconds = refresh_delay_seconds(source.get("expires_in"))
+        layer_id = layer.id()
         timer = QTimer(self)
         timer.setSingleShot(True)
 
         def refresh():
-            if not QgsProject.instance().mapLayer(layer.id()):
+            # Removing a layer deletes the object behind `layer`, so look it
+            # up again instead of touching the stale wrapper.
+            live = QgsProject.instance().mapLayer(layer_id)
+            if not live:
+                self.refresh_timers.pop(layer_id, None)
                 return
             try:
                 renewed = client.tile_source(dataset.id)
-                layer.setDataSource(self._uri(renewed), layer.name(), provider)
-                self._schedule_refresh(layer, dataset, renewed, provider, client)
+                live.setDataSource(self._uri(renewed), live.name(), provider)
+                self._schedule_refresh(live, dataset, renewed, provider, client)
             except GeoLensError:
                 timer.start(60_000)
 
         timer.timeout.connect(refresh)
         timer.start(seconds * 1000)
-        old = self.refresh_timers.pop(layer.id(), None)
+        old = self.refresh_timers.pop(layer_id, None)
         if old:
             old.stop()
-        self.refresh_timers[layer.id()] = timer
+        self.refresh_timers[layer_id] = timer
 
     def _current_bbox(self):
         extent = self.iface.mapCanvas().extent()
