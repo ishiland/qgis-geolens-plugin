@@ -494,6 +494,44 @@ def test_boolean_classes_match_on_their_text():
     ]
 
 
+def test_a_class_with_nothing_to_draw_is_hidden_and_keeps_a_valid_colour():
+    layer = make_layer("Polygon")
+    empty = fill("#4daf4a")
+    empty.symbolLayer(0).setEnabled(False)
+    renderer = QgsCategorizedSymbolRenderer(
+        "type",
+        [
+            QgsRendererCategory("a", fill("#ff0000"), "A"),
+            QgsRendererCategory("b", empty, "B"),
+        ],
+    )
+    layer.setRenderer(renderer)
+    entry, _ = convert(layer)
+    assert entry["style_config"]["categories"][1] == {
+        "value": "b",
+        "label": "B",
+        "color": GREY,
+    }
+    assert entry["filter"] == ["any", ["in", ["get", "type"], ["literal", ["a"]]]]
+
+
+def test_a_hidden_boolean_class_filters_on_its_text():
+    layer = make_layer("Polygon")
+    renderer = QgsCategorizedSymbolRenderer(
+        "type",
+        [
+            QgsRendererCategory(True, fill("#4daf4a"), "Yes"),
+            QgsRendererCategory(False, fill("#377eb8"), "No", False),
+            QgsRendererCategory("", fill("#999999"), "other"),
+        ],
+    )
+    layer.setRenderer(renderer)
+    assert convert(layer)[0]["filter"] == [
+        "all",
+        ["!=", ["to-string", ["get", "type"]], "false"],
+    ]
+
+
 def test_a_class_holding_several_values_expands_to_one_class_each():
     layer = make_layer("Polygon")
     renderer = QgsCategorizedSymbolRenderer(
@@ -943,6 +981,17 @@ def test_a_translucent_cluster_symbol_is_reported():
     assert convert(layer)[1] == [
         loss("effect_dropped", "renderer.clusterSymbol", "cluster symbol transparency")
     ]
+
+
+def test_a_disabled_cluster_symbol_layer_is_ignored():
+    layer = pop_layer()
+    renderer = QgsPointClusterRenderer()
+    renderer.setEmbeddedRenderer(QgsSingleSymbolRenderer(colored("#ff0000")))
+    cluster = marker(color="#0000ff", outline_style="no")
+    cluster.symbolLayer(0).setEnabled(False)
+    renderer.setClusterSymbol(cluster)
+    layer.setRenderer(renderer)
+    assert "clusterColor" not in convert(layer)[0]["style_config"]["builder"]
 
 
 def test_25d_keeps_the_roof_colour_and_reports_the_walls_and_height():

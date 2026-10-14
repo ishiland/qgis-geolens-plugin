@@ -105,7 +105,10 @@ def _class_styles(
     for index, (symbol, label, enabled) in enumerate(items):
         path = f"{where}[{index}]"
         style = convert_symbol(symbol, losses, path)
-        if classes and style.fixed(not size_varies) != classes[0].style.fixed(
+        if style.color is None:
+            # A symbol with nothing to draw is a class that shows nothing.
+            style.color, enabled = FALLBACK_COLOR, False
+        elif classes and style.fixed(not size_varies) != classes[0].style.fixed(
             not size_varies
         ):
             losses.add("symbol_layer_dropped", path, "differs in more than colour")
@@ -179,7 +182,7 @@ def _categorized(layer, renderer, losses: LossLog) -> RenderedStyle:
             for value, entry in listed
         ],
     }
-    result.filter = _category_filter(column, listed, other, null)
+    result.filter = _category_filter(column, listed, other, null, booleans)
     return result
 
 
@@ -204,18 +207,19 @@ def _first_class(classes, renderer, losses: LossLog) -> RenderedStyle:
     return _base(convert_symbol(classes[0].symbol(), losses, "renderer.symbol"))
 
 
-def _category_filter(column, listed, other, null) -> list | None:
+def _category_filter(column, listed, other, null, booleans) -> list | None:
     """Show only what QGIS draws: the enabled classes, and the rest only under an enabled catch-all."""
-    value = ["get", column]
+    raw = ["get", column]
+    value = ["to-string", raw] if booleans else raw
     disabled = [v for v, entry in listed if not entry.enabled]
     if other is None or not other.enabled:
         shown: list = [["in", value, ["literal", [v for v, e in listed if e.enabled]]]]
         if null is not None and null.enabled:
-            shown.append(["==", value, None])
+            shown.append(["==", raw, None])
         return ["any", *shown]
     terms = [["!=", value, v] for v in disabled]
     if null is not None and not null.enabled:
-        terms.append(["!=", value, None])
+        terms.append(["!=", raw, None])
     return ["all", *terms] if terms else None
 
 
@@ -381,15 +385,18 @@ def _cluster(renderer, losses: LossLog) -> RenderedStyle:
         renderer.tolerance(), renderer.toleranceUnit(), losses, "renderer.tolerance"
     )
     symbol = renderer.clusterSymbol()
-    if symbol is not None and symbol.symbolLayers():
-        builder["clusterColor"] = symbol.color().name()
-        if symbol.opacity() * symbol.color().alphaF() < 1:
+    drawn = (
+        [layer for layer in symbol.symbolLayers() if layer.enabled()] if symbol else []
+    )
+    if drawn:
+        builder["clusterColor"] = drawn[0].color().name()
+        if symbol.opacity() * drawn[0].color().alphaF() < 1:
             losses.add(
                 "effect_dropped",
                 "renderer.clusterSymbol",
                 "cluster symbol transparency",
             )
-        for symbol_layer in symbol.symbolLayers():
+        for symbol_layer in drawn:
             if symbol_layer.layerType() == "FontMarker":
                 builder["clusterTextColor"] = symbol_layer.color().name()
     result.style_config = {"render_mode": "cluster", "builder": builder}
