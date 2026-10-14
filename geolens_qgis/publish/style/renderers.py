@@ -167,7 +167,9 @@ def _categorized(layer, renderer, losses: LossLog) -> RenderedStyle:
         losses,
         "renderer.categories",
     )
-    listed, seen, other, null = [], set(), None, None
+    # QGIS keeps the last class for a repeated value.
+    by_value: dict[Any, _Class] = {}
+    other, null = None, None
     booleans = False
     for category, entry in zip(categories, styles):
         value = category.value()
@@ -178,10 +180,8 @@ def _categorized(layer, renderer, losses: LossLog) -> RenderedStyle:
         else:
             for item in value if isinstance(value, list) else [value]:
                 booleans = booleans or isinstance(item, bool)
-                item = _json_value(item)
-                if item not in seen:
-                    seen.add(item)
-                    listed.append((item, entry))
+                by_value[_json_value(item)] = entry
+    listed = list(by_value.items())
     fallback = other.style.color if other else FALLBACK_COLOR
     if null is not None and null.style.color != fallback:
         losses.add(
@@ -432,6 +432,11 @@ def _cluster(renderer, losses: LossLog) -> RenderedStyle:
     )
     if drawn:
         builder["clusterColor"] = drawn[0].color().name()
+        losses.add(
+            "effect_dropped",
+            "renderer.clusterSymbol",
+            "cluster symbol size and outline (GeoLens sizes clusters by count)",
+        )
         if symbol.opacity() * drawn[0].color().alphaF() < 1:
             losses.add(
                 "effect_dropped",

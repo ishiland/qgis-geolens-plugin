@@ -102,6 +102,13 @@ def loss(kind, where, detail=None):
     return item
 
 
+CLUSTER_SIZE = loss(
+    "effect_dropped",
+    "renderer.clusterSymbol",
+    "cluster symbol size and outline (GeoLens sizes clusters by count)",
+)
+
+
 def popup(visible=None):
     return {"enabled": True, "visible_fields": visible}
 
@@ -396,7 +403,8 @@ def test_a_translucent_cluster_text_layer_is_reported():
     renderer.setClusterSymbol(cluster)
     layer.setRenderer(renderer)
     assert convert(layer)[1] == [
-        loss("effect_dropped", "renderer.clusterSymbol", "cluster text transparency")
+        CLUSTER_SIZE,
+        loss("effect_dropped", "renderer.clusterSymbol", "cluster text transparency"),
     ]
 
 
@@ -616,6 +624,21 @@ def test_a_hidden_boolean_class_filters_on_its_text():
     assert convert(layer)[0]["filter"] == [
         "all",
         ["!=", ["to-string", ["get", "type"]], "false"],
+    ]
+
+
+def test_the_last_class_for_a_repeated_value_wins():
+    layer = make_layer("Polygon")
+    renderer = QgsCategorizedSymbolRenderer(
+        "type",
+        [
+            QgsRendererCategory("a", fill("#ff0000"), "first"),
+            QgsRendererCategory("a", fill("#00ff00"), "second"),
+        ],
+    )
+    layer.setRenderer(renderer)
+    assert convert(layer)[0]["style_config"]["categories"] == [
+        {"value": "a", "label": "second", "color": "#00ff00"}
     ]
 
 
@@ -1108,7 +1131,7 @@ def test_cluster_keeps_the_radius_the_cluster_colours_and_the_point_symbol():
         "circle-stroke-width": 0,
         "circle-color": "#ff0000",
     }
-    assert losses == []
+    assert losses == [CLUSTER_SIZE]
 
 
 def test_a_translucent_cluster_symbol_is_reported():
@@ -1120,7 +1143,8 @@ def test_a_translucent_cluster_symbol_is_reported():
     renderer.setClusterSymbol(cluster)
     layer.setRenderer(renderer)
     assert convert(layer)[1] == [
-        loss("effect_dropped", "renderer.clusterSymbol", "cluster symbol transparency")
+        CLUSTER_SIZE,
+        loss("effect_dropped", "renderer.clusterSymbol", "cluster symbol transparency"),
     ]
 
 
