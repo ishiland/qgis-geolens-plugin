@@ -203,8 +203,8 @@ def _classify(layer, selected_only: bool, issues: list[Issue]) -> PlannedLayer |
 
 def _has_no_features(layer) -> bool:
     count = layer.featureCount()
-    if count == Qgis.FeatureCountState.UnknownCount:
-        # Some providers can't count without reading; look for one feature.
+    if count < 0:
+        # Unknown and uncounted both mean the provider must be read to know.
         request = QgsFeatureRequest().setLimit(1).setNoAttributes()
         return next(layer.getFeatures(request), None) is None
     return count == 0

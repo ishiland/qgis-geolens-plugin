@@ -310,11 +310,14 @@ def test_empty_layers_are_skipped(tmp_path):
     assert [issue.code for issue in plan.issues] == ["A031"]
 
 
+@pytest.mark.parametrize("state", ["UnknownCount", "Uncounted"])
 @pytest.mark.parametrize("rows, skipped", [(0, True), (2, False)])
-def test_layers_with_an_unknown_feature_count_are_probed(rows, skipped, monkeypatch):
+def test_layers_with_an_unknown_feature_count_are_probed(
+    state, rows, skipped, monkeypatch
+):
     layer = memory_layer("Point", "lazy", rows=rows)
     monkeypatch.setattr(
-        layer, "featureCount", lambda: Qgis.FeatureCountState.UnknownCount
+        layer, "featureCount", lambda: getattr(Qgis.FeatureCountState, state)
     )
     plan = plan_export([layer], SERVER)
     assert (plan.to_export == []) is skipped
