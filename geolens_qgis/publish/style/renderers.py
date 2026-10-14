@@ -37,6 +37,9 @@ class RenderedStyle:
 
 def _json_value(value):
     """Return a category value as a JSON scalar; dates become ISO text."""
+    if isinstance(value, bool):
+        # MapLibre `match` labels are strings or numbers.
+        return "true" if value else "false"
     if isinstance(value, (str, int, float)):
         return value
     if hasattr(value, "toString"):
@@ -131,8 +134,10 @@ def _categorized(layer, renderer, losses: LossLog) -> RenderedStyle:
         "renderer.categories",
     )
     listed, seen, other, null = [], set(), None, None
+    booleans = False
     for category, entry in zip(categories, styles):
         value = category.value()
+        booleans = booleans or isinstance(value, bool)
         if _is_null(value):
             null = null or entry
         elif value == "":
@@ -158,7 +163,10 @@ def _categorized(layer, renderer, losses: LossLog) -> RenderedStyle:
     ]
     color_expression = ["case", ["==", ["get", column], None], fallback]
     if pairs:
-        color_expression.append(["match", ["get", column], *pairs, fallback])
+        subject = ["get", column]
+        if booleans:
+            subject = ["to-string", subject]
+        color_expression.append(["match", subject, *pairs, fallback])
     else:
         color_expression = fallback
     result.paint[COLOR_PROPERTY[styles[0].style.kind]] = color_expression

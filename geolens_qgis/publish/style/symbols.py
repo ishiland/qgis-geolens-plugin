@@ -173,6 +173,12 @@ def _marker(symbol, layer, style: SymbolStyle, losses: LossLog, where: str) -> N
         to_pixels(layer.size(), layer.sizeUnit(), losses, where) / 2, 2
     )
     style.paint["circle-opacity"] = _opacity(symbol, color)
+    base = QgsSimpleMarkerSymbolLayerBase
+    if (
+        layer.horizontalAnchorPoint() != base.HorizontalAnchorPoint.HCenter
+        or layer.verticalAnchorPoint() != base.VerticalAnchorPoint.VCenter
+    ):
+        losses.add("effect_dropped", where, "marker anchor point")
     offset = layer.offset()
     if offset.x() or offset.y():
         style.paint["circle-translate"] = [
@@ -206,7 +212,7 @@ def convert_symbol(symbol, losses: LossLog, where: str) -> SymbolStyle:
     """Convert a symbol's first symbol layer; every other layer is reported dropped."""
     kind = _SYMBOL_KINDS[type(symbol).__name__]
     style = SymbolStyle(kind)
-    layers = symbol.symbolLayers()
+    layers = [layer for layer in symbol.symbolLayers() if layer.enabled()]
     if not layers:
         # Nothing to draw: keep it invisible rather than letting MapLibre's defaults show it.
         style.paint[OPACITY_PROPERTY[kind]] = 0

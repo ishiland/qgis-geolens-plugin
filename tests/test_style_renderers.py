@@ -191,6 +191,26 @@ def test_a_dashed_marker_outline_is_reported():
     ]
 
 
+def test_a_disabled_symbol_layer_is_not_drawn():
+    layer = make_layer()
+    symbol = marker(color="#ff0000")
+    symbol.symbolLayer(0).setEnabled(False)
+    layer.setRenderer(QgsSingleSymbolRenderer(symbol))
+    assert convert(layer)[0]["paint"] == {"circle-opacity": 0}
+
+
+@pytest.mark.parametrize(
+    "anchor", [{"horizontal_anchor_point": "0"}, {"vertical_anchor_point": "0"}]
+)
+def test_a_marker_anchored_off_centre_is_reported(anchor):
+    layer = make_layer()
+    symbol = marker(color="#ff0000", outline_style="no", **anchor)
+    layer.setRenderer(QgsSingleSymbolRenderer(symbol))
+    assert convert(layer)[1] == [
+        loss("effect_dropped", "renderer.symbol", "marker anchor point")
+    ]
+
+
 def test_a_symbol_with_no_layers_draws_nothing():
     layer = make_layer()
     symbol = marker(color="#ff0000")
@@ -446,6 +466,32 @@ def test_without_an_all_other_class_the_fallback_is_grey():
     ]
     assert entry["filter"] == ["any", ["in", ["get", "type"], ["literal", ["city"]]]]
     assert losses == []
+
+
+def test_boolean_classes_match_on_their_text():
+    layer = make_layer("Polygon")
+    renderer = QgsCategorizedSymbolRenderer(
+        "type",
+        [
+            QgsRendererCategory(True, fill("#4daf4a"), "Yes"),
+            QgsRendererCategory(False, fill("#377eb8"), "No"),
+        ],
+    )
+    layer.setRenderer(renderer)
+    entry, _ = convert(layer)
+    assert entry["paint"]["fill-color"][3] == [
+        "match",
+        ["to-string", ["get", "type"]],
+        "true",
+        "#4daf4a",
+        "false",
+        "#377eb8",
+        GREY,
+    ]
+    assert [c["value"] for c in entry["style_config"]["categories"]] == [
+        "true",
+        "false",
+    ]
 
 
 def test_a_class_holding_several_values_expands_to_one_class_each():
