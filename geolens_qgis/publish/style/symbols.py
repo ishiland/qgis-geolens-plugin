@@ -117,6 +117,10 @@ def _fill(symbol, layer, style: SymbolStyle, losses: LossLog, where: str) -> Non
         return
     if outline_style == Qt.PenStyle.NoPen:
         style.builder["strokeDisabled"] = True
+        if style.builder.get("fillDisabled"):
+            # Neither fill nor outline: the symbol draws nothing.
+            style.paint["fill-opacity"] = 0
+            style.color = None
         return
     style.builder["outlineColor"] = outline_color.name()
     style.builder["outlineWidth"] = to_pixels(
@@ -211,9 +215,18 @@ _SYMBOL_KINDS = {
 }
 
 
+def symbol_kind(symbol) -> str:
+    return _SYMBOL_KINDS[type(symbol).__name__]
+
+
+def hidden_style(kind: str) -> SymbolStyle:
+    """The style of a class that has no symbol: it draws nothing."""
+    return SymbolStyle(kind, paint={OPACITY_PROPERTY[kind]: 0})
+
+
 def convert_symbol(symbol, losses: LossLog, where: str) -> SymbolStyle:
     """Convert a symbol's first symbol layer; every other layer is reported dropped."""
-    kind = _SYMBOL_KINDS[type(symbol).__name__]
+    kind = symbol_kind(symbol)
     style = SymbolStyle(kind)
     layers = [layer for layer in symbol.symbolLayers() if layer.enabled()]
     if not layers:

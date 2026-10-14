@@ -362,6 +362,29 @@ def test_a_no_pen_class_is_hidden_without_blanking_the_others():
     assert losses == []
 
 
+def test_a_class_with_no_symbol_is_hidden():
+    layer = make_layer("Polygon")
+    renderer = QgsCategorizedSymbolRenderer(
+        "type",
+        [
+            QgsRendererCategory("a", fill("#ff0000"), "A"),
+            QgsRendererCategory("b", None, "B"),
+        ],
+    )
+    layer.setRenderer(renderer)
+    entry, losses = convert(layer)
+    assert entry["filter"] == ["any", ["in", ["get", "type"], ["literal", ["a"]]]]
+    assert losses == []
+
+
+def test_a_fill_with_no_brush_and_no_pen_draws_nothing():
+    layer = make_layer("Polygon")
+    symbol = fill("#ff0000", style="no", outline_style="no")
+    layer.setRenderer(QgsSingleSymbolRenderer(symbol))
+    entry, _ = convert(layer)
+    assert entry["paint"] == {"fill-opacity": 0}
+
+
 def test_a_translucent_cluster_text_layer_is_reported():
     layer = pop_layer()
     renderer = QgsPointClusterRenderer()

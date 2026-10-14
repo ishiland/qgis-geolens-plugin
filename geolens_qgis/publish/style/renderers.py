@@ -11,7 +11,14 @@ from qgis.PyQt.QtCore import Qt
 
 from .loss import LossLog
 from .ramps import HEATMAP_SAMPLES, heatmap_color_expression, nearest_ramp
-from .symbols import COLOR_PROPERTY, SIZE_PROPERTY, SymbolStyle, convert_symbol
+from .symbols import (
+    COLOR_PROPERTY,
+    SIZE_PROPERTY,
+    SymbolStyle,
+    convert_symbol,
+    hidden_style,
+    symbol_kind,
+)
 from .units import to_pixels
 
 FALLBACK_COLOR = "#cccccc"
@@ -109,9 +116,14 @@ def _class_styles(
     """
     classes: list[_Class] = []
     lead = None
+    kind = symbol_kind(next(item[0] for item in items if item[0] is not None))
     for index, (symbol, label, enabled) in enumerate(items):
         path = f"{where}[{index}]"
-        style = convert_symbol(symbol, losses, path)
+        style = (
+            convert_symbol(symbol, losses, path)
+            if symbol is not None
+            else hidden_style(kind)
+        )
         drawable = style.color is not None
         if not drawable:
             # A symbol with nothing to draw is a class that shows nothing.
@@ -197,7 +209,7 @@ def _categorized(layer, renderer, losses: LossLog) -> RenderedStyle:
 
 def _class_column(layer, renderer, classes, losses: LossLog) -> str | None:
     """Return the field a class renderer reads, or None when it can't be drawn as classes."""
-    if not classes:
+    if all(entry.symbol() is None for entry in classes):
         return None
     column = _field_name(layer, renderer.classAttribute())
     if column is None:
@@ -211,9 +223,10 @@ def _class_column(layer, renderer, classes, losses: LossLog) -> str | None:
 
 def _first_class(classes, renderer, losses: LossLog) -> RenderedStyle:
     """Draw a class renderer that can't be described as classes with its first symbol."""
-    if not classes:
+    symbol = next((c.symbol() for c in classes if c.symbol() is not None), None)
+    if symbol is None:
         return _unsupported(renderer, losses, "no classes")
-    return _base(convert_symbol(classes[0].symbol(), losses, "renderer.symbol"))
+    return _base(convert_symbol(symbol, losses, "renderer.symbol"))
 
 
 def _category_filter(column, listed, other, null, booleans) -> list | None:
