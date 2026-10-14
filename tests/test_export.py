@@ -127,6 +127,12 @@ def test_a_table_without_geometry_becomes_a_geopackage(tmp_path):
     assert [issue.code for issue in task.result.issues] == ["A032"]
 
 
+def test_a_table_named_like_a_sqlite_internal_table_still_exports(tmp_path):
+    task = run([memory_layer("NoGeometry", "sqlite_results")], tmp_path)
+    (exported,) = task.result.exported
+    assert feature_count(exported.path) == 3
+
+
 def test_selected_features_only(tmp_path):
     layer = memory_layer("Point", "points", rows=5)
     layer.selectByIds([1, 2])
@@ -371,6 +377,7 @@ def test_file_names_drop_control_characters_and_stay_unique(tmp_path):
     assert safe_file_stem("CON") == "_CON"
     assert safe_file_stem("com1.parks") == "_com1.parks"
     assert safe_file_stem("console") == "console"
+    assert safe_file_stem("COM\u00b2") == "_COM\u00b2"
     long = safe_file_stem("é" * 300)
     assert len(long.encode("utf-8")) <= 200
     layers = [memory_layer("Point", "same"), memory_layer("Point", "same")]

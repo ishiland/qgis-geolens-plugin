@@ -31,13 +31,13 @@ VECTOR = "vector"
 TABLE = "table"
 RASTER = "raster"
 
-# Raster providers that stream tiles from a service instead of reading data.
+# Raster providers that draw pre-rendered tiles, which are not source data.
 _SERVICE_RASTER_PROVIDERS = {"wms", "wmts", "arcgismapserver"}
 _GEOTIFF_SUFFIXES = {".tif", ".tiff"}
 # Leaves room for the extension and a uniqueness counter in a 255 byte name.
 _MAX_STEM_BYTES = 200
 _UNSAFE_FILE_CHARS = re.compile(r'[\x00-\x1f\x7f/\\:*?"<>|]')
-_WINDOWS_DEVICE_NAMES = re.compile(r"(?i)(con|prn|aux|nul|com[1-9]|lpt[1-9])")
+_WINDOWS_DEVICE_NAMES = re.compile(r"(?i)(con|prn|aux|nul|com[1-9¹²³]|lpt[1-9¹²³])")
 
 
 @dataclass(frozen=True)
@@ -291,8 +291,11 @@ def _write_vector(job: _Job, path: Path, transform_context, is_canceled) -> None
     if job.kind == VECTOR:
         # FlatGeobuf refuses features with no geometry while it builds an index.
         options.layerOptions = ["SPATIAL_INDEX=NO"]
-    # A GeoPackage names its table; FlatGeobuf takes the file name.
-    options.layerName = path.stem
+    # A GeoPackage names its table; FlatGeobuf takes the file name. SQLite
+    # keeps the sqlite_ prefix for itself.
+    options.layerName = (
+        f"_{path.stem}" if path.stem.lower().startswith("sqlite_") else path.stem
+    )
     writer = QgsVectorFileWriter.create(
         str(path), job.fields, job.wkb_type, job.crs, transform_context, options
     )
