@@ -342,6 +342,41 @@ def test_a_line_with_no_pen_is_invisible():
     assert convert(layer)[0]["paint"]["line-opacity"] == 0
 
 
+def test_a_no_pen_class_is_hidden_without_blanking_the_others():
+    layer = make_layer("LineString", fields=(("type", "s"),))
+    renderer = QgsCategorizedSymbolRenderer(
+        "type",
+        [
+            QgsRendererCategory(
+                "a", QgsLineSymbol.createSimple({"line_style": "no"}), "A"
+            ),
+            QgsRendererCategory(
+                "b", QgsLineSymbol.createSimple({"line_color": "#ff0000"}), "B"
+            ),
+        ],
+    )
+    layer.setRenderer(renderer)
+    entry, losses = convert(layer)
+    assert entry["paint"]["line-opacity"] == 1.0
+    assert entry["filter"] == ["any", ["in", ["get", "type"], ["literal", ["b"]]]]
+    assert losses == []
+
+
+def test_a_translucent_cluster_text_layer_is_reported():
+    layer = pop_layer()
+    renderer = QgsPointClusterRenderer()
+    renderer.setEmbeddedRenderer(QgsSingleSymbolRenderer(colored("#ff0000")))
+    cluster = marker(color="#0000ff", outline_style="no")
+    cluster.appendSymbolLayer(
+        QgsFontMarkerSymbolLayer("Arial", "1", 8, QColor(255, 255, 255, 90))
+    )
+    renderer.setClusterSymbol(cluster)
+    layer.setRenderer(renderer)
+    assert convert(layer)[1] == [
+        loss("effect_dropped", "renderer.clusterSymbol", "cluster text transparency")
+    ]
+
+
 def test_date_class_values_become_iso_text():
     layer = make_layer("Polygon", fields=(("day", "s"),))
     renderer = QgsCategorizedSymbolRenderer(

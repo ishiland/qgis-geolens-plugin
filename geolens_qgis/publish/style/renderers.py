@@ -415,6 +415,12 @@ def _cluster(renderer, losses: LossLog) -> RenderedStyle:
         for symbol_layer in drawn:
             if symbol_layer.layerType() == "FontMarker":
                 builder["clusterTextColor"] = symbol_layer.color().name()
+                if symbol.opacity() * symbol_layer.color().alphaF() < 1:
+                    losses.add(
+                        "effect_dropped",
+                        "renderer.clusterSymbol",
+                        "cluster text transparency",
+                    )
     result.style_config = {"render_mode": "cluster", "builder": builder}
     return result
 
