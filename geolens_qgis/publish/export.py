@@ -15,13 +15,9 @@ from pathlib import Path
 from typing import Iterable
 from urllib.parse import urlparse
 
-from qgis.PyQt.QtCore import QThread
 from qgis.core import (
     Qgis,
     QgsFeatureRequest,
-    QgsRasterBlockFeedback,
-    QgsRasterFileWriter,
-    QgsRasterPipe,
     QgsTask,
     QgsVectorFileWriter,
     QgsVectorLayerFeatureSource,
@@ -194,16 +190,15 @@ def _classify(layer, selected_only: bool, issues: list[Issue]) -> PlannedLayer |
         layer_type == Qgis.LayerType.Raster
         and layer.providerType() not in _SERVICE_RASTER_PROVIDERS
     ):
-        if _stores_scaled_values(layer) and _geotiff_path(layer) is None:
+        if _geotiff_path(layer) is None:
             issues.append(
                 Issue(
-                    "A033",
+                    "A030",
                     "warning",
                     layer_id,
                     name,
-                    "This raster stores scaled values and can't be re-encoded "
-                    "without changing them, so it will be skipped. Publish the "
-                    "original file instead.",
+                    "This raster format can't be published yet, so it will be "
+                    "skipped. Convert it to a GeoTIFF to publish it.",
                 )
             )
             return None
@@ -218,14 +213,6 @@ def _classify(layer, selected_only: bool, issues: list[Issue]) -> PlannedLayer |
         )
     )
     return None
-
-
-def _stores_scaled_values(layer) -> bool:
-    provider = layer.dataProvider()
-    return any(
-        provider.bandScale(band) != 1 or provider.bandOffset(band) != 0
-        for band in range(1, provider.bandCount() + 1)
-    )
 
 
 def _has_no_features(layer) -> bool:
@@ -286,11 +273,6 @@ class _Job:
     wkb_type: object = None
     crs: object = None
     fids: list[int] | None = None
-    pipe: object = None
-    palette_source: str | None = None
-    columns: int = 0
-    rows: int = 0
-    extent: object = None
 
 
 def _snapshot(planned: PlannedLayer) -> _Job:
@@ -298,14 +280,6 @@ def _snapshot(planned: PlannedLayer) -> _Job:
     job = _Job(layer.id(), layer.name(), planned.kind)
     if planned.kind == RASTER:
         job.existing_geotiff = _geotiff_path(layer)
-        if job.existing_geotiff is None:
-            job.pipe = QgsRasterPipe()
-            job.pipe.set(layer.dataProvider().clone())
-            job.pipe.moveToThread(None)
-            if layer.providerType() == "gdal":
-                job.palette_source = layer.source().split("|", 1)[0]
-            job.columns, job.rows = layer.width(), layer.height()
-            job.extent, job.crs = layer.extent(), layer.crs()
         return job
     job.source = QgsVectorLayerFeatureSource(layer)
     job.fields, job.wkb_type, job.crs = layer.fields(), layer.wkbType(), layer.crs()
@@ -361,9 +335,9 @@ def _geotiff_path(layer) -> Path | None:
     """The layer's own GeoTIFF, when that file alone describes the raster.
 
     GDAL lists every file a dataset depends on, so a TIFF that also needs a
-    world file, PAM or other sidecar is rewritten instead of uploaded bare. So
-    is one whose layer CRS was overridden in QGIS, since the file would still
-    carry the old projection.
+    world file, PAM or other sidecar can't be uploaded bare. Neither can one
+    whose layer CRS was overridden in QGIS, since the file would still carry
+    the old projection.
     """
     from osgeo import gdal
 
@@ -380,50 +354,6 @@ def _geotiff_path(layer) -> Path | None:
     files = dataset.GetFileList()
     dataset = None
     return path if len(files) == 1 else None
-
-
-def _write_raster(job: _Job, path: Path, transform_context, feedback) -> None:
-    writer = QgsRasterFileWriter(str(path))
-    writer.setOutputFormat("GTiff")
-    # The pipe was detached from the GUI thread when the task was made.
-    job.pipe.moveToThread(QThread.currentThread())
-    try:
-        result = writer.writeRaster(
-            job.pipe,
-            job.columns,
-            job.rows,
-            job.extent,
-            job.crs,
-            transform_context,
-            feedback,
-        )
-    finally:
-        job.pipe.moveToThread(None)
-    if result != Qgis.RasterFileWriterResult.Success:
-        raise ExportError(f"Could not export {job.name}")
-    if job.palette_source:
-        _copy_palette(job.palette_source, path)
-
-
-def _copy_palette(source: str, target: Path) -> None:
-    """Give the re-encoded raster the source's colour table.
-
-    The QGIS raster writer copies the palette indices but not the table that
-    turns them into colours.
-    """
-    from osgeo import gdal
-
-    original = gdal.Open(source)
-    table = original.GetRasterBand(1).GetColorTable() if original else None
-    if table is None:
-        return
-    copy = gdal.Open(str(target), gdal.GA_Update)
-    if copy is None or copy.RasterCount != 1:
-        return
-    band = copy.GetRasterBand(1)
-    band.SetRasterColorTable(table)
-    band.SetRasterColorInterpretation(gdal.GCI_PaletteIndex)
-    copy.FlushCache()
 
 
 class ExportTask(QgsTask):
@@ -448,17 +378,12 @@ class ExportTask(QgsTask):
         self.folder = Path(folder or tempfile.mkdtemp(prefix="geolens_publish_"))
         self.transform_context = transform_context
         self.max_file_size_bytes = max_file_size_bytes
-        self.feedback = QgsRasterBlockFeedback()
         self.result = ExportResult(
             references=list(plan.references), issues=list(plan.issues)
         )
         self.error = ""
         self._jobs = [_snapshot(planned) for planned in plan.to_export]
         self.setDependentLayers([planned.layer for planned in plan.to_export])
-
-    def cancel(self):
-        self.feedback.cancel()
-        super().cancel()
 
     def run(self) -> bool:
         total = max(1, len(self._jobs))
@@ -476,14 +401,11 @@ class ExportTask(QgsTask):
     def _export(self, job: _Job) -> ExportedLayer:
         path = job.existing_geotiff
         if path is None:
-            suffix = {VECTOR: ".fgb", TABLE: ".gpkg", RASTER: ".tif"}[job.kind]
+            suffix = ".fgb" if job.kind == VECTOR else ".gpkg"
             path = _unique_path(self.folder, safe_file_stem(job.name), suffix)
         try:
             if job.existing_geotiff is None:
-                if job.kind == RASTER:
-                    _write_raster(job, path, self.transform_context, self.feedback)
-                else:
-                    _write_vector(job, path, self.transform_context, self.isCanceled)
+                _write_vector(job, path, self.transform_context, self.isCanceled)
             size = path.stat().st_size
             checksum = sha256_of(path, self.isCanceled)
         except (ExportError, OSError):

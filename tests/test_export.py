@@ -21,9 +21,7 @@ from qgis.core import (  # noqa: E402
     QgsVectorTileLayer,
 )
 
-from qgis.PyQt.QtCore import QThread  # noqa: E402
 
-from geolens_qgis.publish import export  # noqa: E402
 from geolens_qgis.publish.export import (  # noqa: E402
     ExportTask,
     plan_export,
@@ -232,7 +230,14 @@ def test_geotiff_is_uploaded_as_it_is(tmp_path):
     assert exported.sha256 == hashlib.sha256(exported.path.read_bytes()).hexdigest()
 
 
-def test_a_geotiff_with_a_pam_sidecar_is_rewritten(tmp_path):
+def skipped_with_a030(layer):
+    plan = plan_export([layer], SERVER)
+    assert plan.to_export == []
+    assert [(i.code, i.severity) for i in plan.issues] == [("A030", "warning")]
+    assert "GeoTIFF" in plan.issues[0].message
+
+
+def test_a_geotiff_with_a_pam_sidecar_is_skipped(tmp_path):
     from osgeo import gdal
 
     layer = geotiff(tmp_path / "dem.tif")
@@ -240,12 +245,10 @@ def test_a_geotiff_with_a_pam_sidecar_is_rewritten(tmp_path):
     dataset.GetRasterBand(1).ComputeStatistics(False)
     dataset = None
     assert (tmp_path / "dem.tif.aux.xml").exists()
-    (exported,) = run([layer], tmp_path).result.exported
-    assert exported.temporary
-    assert exported.path.parent == tmp_path / "out"
+    skipped_with_a030(layer)
 
 
-def test_a_geotiff_georeferenced_by_a_world_file_is_rewritten(tmp_path):
+def test_a_geotiff_georeferenced_by_a_world_file_is_skipped(tmp_path):
     from osgeo import gdal
 
     plain = gdal.GetDriverByName("GTiff").Create(
@@ -253,106 +256,28 @@ def test_a_geotiff_georeferenced_by_a_world_file_is_rewritten(tmp_path):
     )
     plain = None
     (tmp_path / "scan.tfw").write_text("1\n0\n0\n-1\n0\n8\n")
-    layer = QgsRasterLayer(str(tmp_path / "scan.tif"), "scan")
-    (exported,) = run([layer], tmp_path).result.exported
-    assert exported.temporary
+    skipped_with_a030(QgsRasterLayer(str(tmp_path / "scan.tif"), "scan"))
 
 
-def test_a_geotiff_whose_layer_crs_was_overridden_is_rewritten(tmp_path):
+def test_a_geotiff_whose_layer_crs_was_overridden_is_skipped(tmp_path):
     layer = geotiff(tmp_path / "dem.tif")
     layer.setCrs(QgsCoordinateReferenceSystem("EPSG:3857"))
-    (exported,) = run([layer], tmp_path).result.exported
-    assert exported.temporary
-    assert QgsRasterLayer(str(exported.path)).crs().authid() == "EPSG:3857"
+    skipped_with_a030(layer)
 
 
-def test_a_rewritten_paletted_raster_keeps_its_colour_table(tmp_path):
-    from osgeo import gdal
-
-    source = tmp_path / "land.tif"
-    geotiff(source)
-    dataset = gdal.Open(str(source), gdal.GA_Update)
-    table = gdal.ColorTable()
-    table.SetColorEntry(7, (10, 20, 30, 255))
-    dataset.GetRasterBand(1).SetRasterColorTable(table)
-    dataset.GetRasterBand(1).SetRasterColorInterpretation(gdal.GCI_PaletteIndex)
-    dataset = None
-    layer = QgsRasterLayer(str(source), "land")
-    layer.setCrs(QgsCoordinateReferenceSystem("EPSG:3857"))
-    (exported,) = run([layer], tmp_path).result.exported
-    assert exported.temporary
-    copy = gdal.Open(str(exported.path))
-    band = copy.GetRasterBand(1)
-    assert band.GetColorInterpretation() == gdal.GCI_PaletteIndex
-    assert band.GetColorTable().GetColorEntry(7) == (10, 20, 30, 255)
-
-
-def test_a_scaled_raster_that_needs_rewriting_is_skipped(tmp_path):
-    from osgeo import gdal
-
-    source = tmp_path / "packed.tif"
-    dataset = gdal.GetDriverByName("GTiff").Create(
-        str(source), 8, 8, 1, gdal.GDT_UInt16
-    )
-    dataset.SetGeoTransform((0, 1, 0, 8, 0, -1))
-    dataset.GetRasterBand(1).SetScale(0.0001)
-    dataset.GetRasterBand(1).Fill(5000)
-    dataset = None
-    layer = QgsRasterLayer(str(source), "packed")
-    layer.setCrs(QgsCoordinateReferenceSystem("EPSG:3857"))
-    plan = plan_export([layer], SERVER)
-    assert plan.to_export == []
-    assert [(i.code, i.severity) for i in plan.issues] == [("A033", "warning")]
-
-
-def test_a_scaled_geotiff_uploadable_as_it_is_still_exports(tmp_path):
-    from osgeo import gdal
-
-    layer = geotiff(tmp_path / "dem.tif")
-    dataset = gdal.Open(str(tmp_path / "dem.tif"), gdal.GA_Update)
-    dataset.GetRasterBand(1).SetScale(0.5)
-    dataset = None
-    (exported,) = run([layer], tmp_path).result.exported
-    assert not exported.temporary
-
-
-def test_the_raster_pipe_belongs_to_the_writing_thread_only_while_writing(
-    tmp_path, monkeypatch
-):
-    calls = []
-
-    class Pipe:
-        def moveToThread(self, thread):
-            calls.append(("move", thread))
-
-    class Writer:
-        def __init__(self, path):
-            pass
-
-        def setOutputFormat(self, name):
-            pass
-
-        def writeRaster(self, pipe, *args):
-            calls.append(("write",))
-            return Qgis.RasterFileWriterResult.Success
-
-    monkeypatch.setattr(export, "QgsRasterFileWriter", Writer)
-    job = export._Job("id", "dem", "raster", pipe=Pipe())
-    export._write_raster(job, tmp_path / "dem.tif", None, None)
-    assert calls == [("move", QThread.currentThread()), ("write",), ("move", None)]
-
-
-def test_other_rasters_are_written_as_geotiff(tmp_path):
+def test_other_raster_formats_are_skipped(tmp_path):
     from osgeo import gdal
 
     source = tmp_path / "grid.tif"
     geotiff(source)
     gdal.Translate(str(tmp_path / "grid.asc"), str(source), format="AAIGrid")
-    task = run([QgsRasterLayer(str(tmp_path / "grid.asc"), "grid")], tmp_path)
-    (exported,) = task.result.exported
-    assert exported.path.suffix == ".tif"
-    assert exported.temporary
-    assert QgsRasterLayer(str(exported.path)).isValid()
+    layers = [
+        QgsRasterLayer(str(tmp_path / "grid.asc"), "grid"),
+        memory_layer("Point", "points"),
+    ]
+    plan = plan_export(layers, SERVER)
+    assert [planned.layer.name() for planned in plan.to_export] == ["points"]
+    assert [(i.code, i.layer_name) for i in plan.issues] == [("A030", "grid")]
 
 
 def test_layers_are_locked_for_the_task(tmp_path):
