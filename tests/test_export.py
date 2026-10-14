@@ -266,6 +266,27 @@ def test_a_geotiff_whose_layer_crs_was_overridden_is_rewritten(tmp_path):
     assert QgsRasterLayer(str(exported.path)).crs().authid() == "EPSG:3857"
 
 
+def test_a_rewritten_paletted_raster_keeps_its_colour_table(tmp_path):
+    from osgeo import gdal
+
+    source = tmp_path / "land.tif"
+    geotiff(source)
+    dataset = gdal.Open(str(source), gdal.GA_Update)
+    table = gdal.ColorTable()
+    table.SetColorEntry(7, (10, 20, 30, 255))
+    dataset.GetRasterBand(1).SetRasterColorTable(table)
+    dataset.GetRasterBand(1).SetRasterColorInterpretation(gdal.GCI_PaletteIndex)
+    dataset = None
+    layer = QgsRasterLayer(str(source), "land")
+    layer.setCrs(QgsCoordinateReferenceSystem("EPSG:3857"))
+    (exported,) = run([layer], tmp_path).result.exported
+    assert exported.temporary
+    copy = gdal.Open(str(exported.path))
+    band = copy.GetRasterBand(1)
+    assert band.GetColorInterpretation() == gdal.GCI_PaletteIndex
+    assert band.GetColorTable().GetColorEntry(7) == (10, 20, 30, 255)
+
+
 def test_the_raster_pipe_belongs_to_the_writing_thread_only_while_writing(
     tmp_path, monkeypatch
 ):

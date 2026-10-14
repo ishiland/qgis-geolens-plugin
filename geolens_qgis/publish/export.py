@@ -266,6 +266,7 @@ class _Job:
     crs: object = None
     fids: list[int] | None = None
     pipe: object = None
+    palette_source: str | None = None
     columns: int = 0
     rows: int = 0
     extent: object = None
@@ -280,6 +281,8 @@ def _snapshot(planned: PlannedLayer) -> _Job:
             job.pipe = QgsRasterPipe()
             job.pipe.set(layer.dataProvider().clone())
             job.pipe.moveToThread(None)
+            if layer.providerType() == "gdal":
+                job.palette_source = layer.source().split("|", 1)[0]
             job.columns, job.rows = layer.width(), layer.height()
             job.extent, job.crs = layer.extent(), layer.crs()
         return job
@@ -377,6 +380,29 @@ def _write_raster(job: _Job, path: Path, transform_context, feedback) -> None:
         job.pipe.moveToThread(None)
     if result != Qgis.RasterFileWriterResult.Success:
         raise ExportError(f"Could not export {job.name}")
+    if job.palette_source:
+        _copy_palette(job.palette_source, path)
+
+
+def _copy_palette(source: str, target: Path) -> None:
+    """Give the re-encoded raster the source's colour table.
+
+    The QGIS raster writer copies the palette indices but not the table that
+    turns them into colours.
+    """
+    from osgeo import gdal
+
+    original = gdal.Open(source)
+    table = original.GetRasterBand(1).GetColorTable() if original else None
+    if table is None:
+        return
+    copy = gdal.Open(str(target), gdal.GA_Update)
+    if copy is None or copy.RasterCount != 1:
+        return
+    band = copy.GetRasterBand(1)
+    band.SetRasterColorTable(table)
+    band.SetRasterColorInterpretation(gdal.GCI_PaletteIndex)
+    copy.FlushCache()
 
 
 class ExportTask(QgsTask):
