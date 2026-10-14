@@ -267,13 +267,17 @@ def _write_vector(job: _Job, path: Path, transform_context, is_canceled) -> None
     request = QgsFeatureRequest()
     if job.fids is not None:
         request.setFilterFids(job.fids)
+    canceled = False
     for feature in job.source.getFeatures(request):
         if is_canceled():
+            canceled = True
             break
         if not writer.addFeature(feature):
             raise ExportError(f"Could not export {job.name}: {writer.errorMessage()}")
     # Deleting the writer flushes and closes the file.
     del writer
+    if canceled:
+        raise ExportError("Export canceled.")
 
 
 def _geotiff_path(layer) -> Path | None:
@@ -353,10 +357,15 @@ class ExportTask(QgsTask):
         if path is None:
             suffix = {VECTOR: ".fgb", TABLE: ".gpkg", RASTER: ".tif"}[job.kind]
             path = _unique_path(self.folder, safe_file_stem(job.name), suffix)
-            if job.kind == RASTER:
-                _write_raster(job, path, self.transform_context, self.feedback)
-            else:
-                _write_vector(job, path, self.transform_context, self.isCanceled)
+            try:
+                if job.kind == RASTER:
+                    _write_raster(job, path, self.transform_context, self.feedback)
+                else:
+                    _write_vector(job, path, self.transform_context, self.isCanceled)
+            except ExportError:
+                # Never leave a truncated file where a finished one is expected.
+                path.unlink(missing_ok=True)
+                raise
         size = path.stat().st_size
         if self.max_file_size_bytes is not None and size > self.max_file_size_bytes:
             self.result.issues.append(

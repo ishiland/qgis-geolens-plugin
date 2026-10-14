@@ -1,6 +1,7 @@
 """Layer export against a real QGIS."""
 
 import hashlib
+import itertools
 
 import pytest
 
@@ -131,6 +132,18 @@ def test_the_export_is_a_snapshot_of_the_layer_when_the_task_was_made(tmp_path):
     (exported,) = task.result.exported
     assert exported.layer_name == "points"
     assert feature_count(exported.path) == 2
+
+
+def test_cancelling_during_the_write_fails_the_task_and_leaves_no_file(tmp_path):
+    plan = plan_export([memory_layer("Point", "points")], SERVER)
+    (tmp_path / "out").mkdir()
+    task = ExportTask(plan, tmp_path / "out", QgsCoordinateTransformContext())
+    # Not canceled when the task starts a layer, canceled once the writer runs.
+    states = itertools.chain([False], itertools.repeat(True))
+    task.isCanceled = lambda: next(states)
+    assert task.run() is False
+    assert task.result.exported == []
+    assert list((tmp_path / "out").iterdir()) == []
 
 
 def test_layer_with_no_selection_is_skipped_when_selected_only(tmp_path):
