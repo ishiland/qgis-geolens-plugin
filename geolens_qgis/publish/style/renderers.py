@@ -80,13 +80,21 @@ class _Class:
     enabled: bool
 
 
-def _class_styles(items, losses: LossLog, where: str) -> list[_Class]:
-    """Convert every class symbol; classes may differ from the first only in colour."""
+def _class_styles(
+    items, losses: LossLog, where: str, size_varies: bool = False
+) -> list[_Class]:
+    """Convert every class symbol.
+
+    Classes may differ from the first only in colour, and in size when the
+    renderer can vary it.
+    """
     classes = []
     for index, (symbol, label, enabled) in enumerate(items):
         path = f"{where}[{index}]"
         style = convert_symbol(symbol, losses, path)
-        if classes and style.fixed() != classes[0].style.fixed():
+        if classes and style.fixed(not size_varies) != classes[0].style.fixed(
+            not size_varies
+        ):
             losses.add("symbol_layer_dropped", path, "differs in more than colour")
         classes.append(_Class(style, label, enabled))
     return classes
@@ -180,7 +188,7 @@ def _category_filter(column, listed, other, null) -> list | None:
     disabled = [v for v, entry in listed if not entry.enabled]
     if other is not None and not other.enabled:
         shown: list = [["in", value, ["literal", [v for v, e in listed if e.enabled]]]]
-        if null is None or null.enabled:
+        if null is not None and null.enabled:
             shown.append(["==", value, None])
         return ["any", *shown]
     terms = [["!=", value, v] for v in disabled]
@@ -237,6 +245,7 @@ def _graduated(layer, renderer, losses: LossLog) -> RenderedStyle:
         [(r.symbol(), r.label(), r.renderState()) for r in ranges],
         losses,
         "renderer.ranges",
+        size_varies=True,
     )
     method = _METHODS.get(renderer.classificationMethod().id(), "manual")
     edges = [r.upperValue() for r in ranges[:-1]]
@@ -272,23 +281,33 @@ def _graduated(layer, renderer, losses: LossLog) -> RenderedStyle:
     return result
 
 
-def _range_filter(column, ranges, styles) -> list | None:
+def _range_filter(column, ranges, styles) -> list:
+    """Show only what the enabled ranges cover.
+
+    QGIS draws nothing outside its ranges, and gives an edge value to the lower
+    range, so a range that starts where the previous one ends excludes that edge.
+    """
     value = ["get", column]
-    terms = [
-        ["!", ["all", [">=", value, r.lowerValue()], ["<=", value, r.upperValue()]]]
-        for r, entry in zip(ranges, styles)
-        if not entry.enabled
-    ]
-    return ["all", *terms] if terms else None
+    spans: list[list] = []
+    for index, (r, entry) in enumerate(zip(ranges, styles)):
+        if not entry.enabled:
+            continue
+        joined = index > 0 and ranges[index - 1].upperValue() == r.lowerValue()
+        if spans and joined and styles[index - 1].enabled:
+            spans[-1][1] = r.upperValue()
+        else:
+            spans.append([r.lowerValue(), r.upperValue(), ">" if joined else ">="])
+    terms = [["all", [op, value, low], ["<=", value, high]] for low, high, op in spans]
+    return terms[0] if len(terms) == 1 else ["any", *terms]
 
 
 def _heatmap(layer, renderer, losses: LossLog) -> RenderedStyle:
     ramp = renderer.colorRamp()
-    sampled = [
-        ramp.color(i / (HEATMAP_SAMPLES - 1)).name() for i in range(HEATMAP_SAMPLES)
-    ]
-    name, reverse, error = nearest_ramp(sampled)
-    if error > RAMP_MATCH_TOLERANCE:
+    colors = [ramp.color(i / (HEATMAP_SAMPLES - 1)) for i in range(HEATMAP_SAMPLES)]
+    name, reverse, error = nearest_ramp([color.name() for color in colors])
+    # Density 0 is transparent in GeoLens whatever the first colour is.
+    translucent = any(color.alpha() < 255 for color in colors[1:])
+    if error > RAMP_MATCH_TOLERANCE or translucent:
         losses.add(
             "raster_renderer_approximated", "renderer.colorRamp", f"drawn with {name}"
         )

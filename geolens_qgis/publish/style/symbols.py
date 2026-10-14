@@ -47,9 +47,9 @@ class SymbolStyle:
     def size(self) -> float | None:
         return self.paint.get(SIZE_PROPERTY.get(self.kind, ""))
 
-    def fixed(self) -> dict[str, Any]:
-        """Everything except the colour and the size property."""
-        skip = SIZE_PROPERTY.get(self.kind)
+    def fixed(self, with_size: bool = False) -> dict[str, Any]:
+        """Everything a class can't change: all but the colour, and the size unless asked."""
+        skip = None if with_size else SIZE_PROPERTY.get(self.kind)
         return {
             "paint": {k: v for k, v in self.paint.items() if k != skip},
             "layout": self.layout,
@@ -167,8 +167,9 @@ def _marker(symbol, layer, style: SymbolStyle, losses: LossLog, where: str) -> N
     style.paint["circle-stroke-width"] = to_pixels(
         layer.strokeWidth(), layer.strokeWidthUnit(), losses, where
     )
-    if stroke.alphaF() < 1:
-        style.paint["circle-stroke-opacity"] = round(stroke.alphaF(), 3)
+    stroke_opacity = _opacity(symbol, stroke)
+    if stroke_opacity < 1:
+        style.paint["circle-stroke-opacity"] = stroke_opacity
 
 
 _CONVERTERS = {"fill": _fill, "line": _line, "marker": _marker}

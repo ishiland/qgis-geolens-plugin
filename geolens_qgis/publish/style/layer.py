@@ -13,6 +13,7 @@ from .units import scale_to_zoom
 MAX_ZOOM = 24
 MAX_POPUP_FIELDS = 100
 MAX_NAME = 255
+MAX_FIELD_NAME = 128
 
 
 def zoom_range(layer, losses: LossLog) -> tuple[float | None, float | None]:
@@ -39,7 +40,7 @@ def zoom_range(layer, losses: LossLog) -> tuple[float | None, float | None]:
     )
 
 
-def popup_config(layer) -> dict[str, Any]:
+def popup_config(layer, losses: LossLog) -> dict[str, Any]:
     """Show the fields the layer's form doesn't hide."""
     fields = layer.fields()
     visible = [
@@ -49,6 +50,13 @@ def popup_config(layer) -> dict[str, Any]:
     ]
     if len(visible) == fields.count():
         return {"enabled": True, "visible_fields": None}
+    if any(len(name) > MAX_FIELD_NAME for name in visible):
+        losses.add(
+            "expression_not_representable",
+            "popup_config",
+            f"field names longer than {MAX_FIELD_NAME} characters left out",
+        )
+        visible = [name for name in visible if len(name) <= MAX_FIELD_NAME]
     return {"enabled": bool(visible), "visible_fields": visible[:MAX_POPUP_FIELDS]}
 
 
@@ -89,6 +97,6 @@ def convert_layer(
         paint=style.paint,
         layout=style.layout,
         filter=style.filter,
-        popup_config=popup_config(layer),
+        popup_config=popup_config(layer, losses),
     )
     return entry, losses.items

@@ -128,6 +128,7 @@ def test_single_marker_converts_size_stroke_and_alpha():
             "circle-opacity": 0.5,
             "circle-stroke-color": "#112233",
             "circle-stroke-width": 1.51,
+            "circle-stroke-opacity": 0.5,
             "circle-color": "#ff8800",
         },
         "layout": {},
@@ -135,6 +136,14 @@ def test_single_marker_converts_size_stroke_and_alpha():
         "popup_config": popup(),
     }
     assert losses == []
+
+
+def test_symbol_opacity_applies_to_the_marker_stroke_too():
+    layer = make_layer()
+    symbol = marker(color="#ff0000", outline_color="#000000")
+    symbol.setOpacity(0.5)
+    layer.setRenderer(QgsSingleSymbolRenderer(symbol))
+    assert convert(layer)[0]["paint"]["circle-stroke-opacity"] == 0.5
 
 
 def test_symbol_opacity_multiplies_the_colour_alpha():
@@ -396,6 +405,41 @@ def test_a_class_that_differs_in_more_than_colour_is_reported():
     ]
 
 
+def test_categories_of_different_sizes_are_reported():
+    layer = make_layer()
+    renderer = QgsCategorizedSymbolRenderer(
+        "type",
+        [
+            QgsRendererCategory("a", marker(color="#ff0000", size="2"), "A"),
+            QgsRendererCategory("b", marker(color="#00ff00", size="6"), "B"),
+        ],
+    )
+    layer.setRenderer(renderer)
+    assert convert(layer)[1] == [
+        loss(
+            "symbol_layer_dropped",
+            "renderer.categories[1]",
+            "differs in more than colour",
+        )
+    ]
+
+
+def test_a_disabled_all_other_class_hides_nulls_unless_a_null_class_is_shown():
+    layer = make_layer("Polygon")
+    renderer = QgsCategorizedSymbolRenderer(
+        "type",
+        [
+            QgsRendererCategory("city", fill("#4daf4a"), "City"),
+            QgsRendererCategory("", fill("#999999"), "other", False),
+        ],
+    )
+    layer.setRenderer(renderer)
+    assert convert(layer)[0]["filter"] == [
+        "any",
+        ["in", ["get", "type"], ["literal", ["city"]]],
+    ]
+
+
 def test_a_class_attribute_that_is_an_expression_falls_back_to_the_first_symbol():
     layer = make_layer("Polygon")
     renderer = QgsCategorizedSymbolRenderer(
@@ -479,6 +523,11 @@ def test_graduated_maps_each_classification_method(method, expected):
             ],
         ],
     }
+    assert entry["filter"] == [
+        "all",
+        [">=", ["get", "pop"], 0.0],
+        ["<=", ["get", "pop"], 1000.0],
+    ]
     assert losses == []
 
 
@@ -557,14 +606,16 @@ def test_graduated_size_and_colour_together_keep_the_colour():
     assert losses == [loss("unsupported_renderer", "renderer", "graduated size+color")]
 
 
-def test_switched_off_ranges_are_hidden_by_a_filter():
+def test_switched_off_ranges_are_hidden_and_the_shared_edge_stays_with_the_lower_range():
     layer = pop_layer()
     renderer = graduated("pop", [colored(c) for c in COLORS], [0, 10, 100, 1000])
     renderer.updateRangeRenderState(1, False)
     layer.setRenderer(renderer)
+    value = ["get", "pop"]
     assert convert(layer)[0]["filter"] == [
-        "all",
-        ["!", ["all", [">=", ["get", "pop"], 10.0], ["<=", ["get", "pop"], 100.0]]],
+        "any",
+        ["all", [">=", value, 0.0], ["<=", value, 10.0]],
+        ["all", [">", value, 100.0], ["<=", value, 1000.0]],
     ]
 
 
@@ -630,6 +681,25 @@ def test_heatmap_with_a_custom_ramp_is_drawn_with_the_nearest_named_one():
         losses[0]["detail"]
         == f"drawn with {entry['style_config']['builder']['heatmapRamp']}"
     )
+
+
+def test_a_translucent_heatmap_ramp_is_reported_even_when_the_colours_match():
+    layer = pop_layer()
+    colors = ramp_colors("Blues")
+    middle = QColor(colors[2])
+    middle.setAlpha(90)
+    stops = [
+        QgsGradientStop(0.25, QColor(colors[1])),
+        QgsGradientStop(0.5, middle),
+        QgsGradientStop(0.75, QColor(colors[3])),
+    ]
+    ramp = QgsGradientColorRamp(QColor(colors[0]), QColor(colors[-1]), False, stops)
+    renderer = QgsHeatmapRenderer()
+    renderer.setColorRamp(ramp)
+    layer.setRenderer(renderer)
+    assert "raster_renderer_approximated" in [
+        item["kind"] for item in convert(layer)[1]
+    ]
 
 
 def test_a_heatmap_weight_expression_is_reported():
@@ -745,6 +815,21 @@ def test_hidden_form_fields_are_left_out_of_the_popup():
     layer = make_layer(fields=(("type", "s"), ("secret", "s"), ("name", "s")))
     layer.setEditorWidgetSetup(1, QgsEditorWidgetSetup("Hidden", {}))
     assert convert(layer)[0]["popup_config"] == popup(["type", "name"])
+
+
+def test_field_names_over_the_manifest_limit_are_left_out_of_the_popup():
+    long_name = "f" * 129
+    layer = make_layer(fields=(("type", "s"), ("secret", "s"), (long_name, "s")))
+    layer.setEditorWidgetSetup(1, QgsEditorWidgetSetup("Hidden", {}))
+    entry, losses = convert(layer)
+    assert entry["popup_config"] == popup(["type"])
+    assert losses == [
+        loss(
+            "expression_not_representable",
+            "popup_config",
+            "field names longer than 128 characters left out",
+        )
+    ]
 
 
 def test_a_dataset_id_replaces_the_dataset_key():
