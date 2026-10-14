@@ -118,7 +118,13 @@ def plan_export(
         layer_id, name = layer.id(), layer.name()
         dataset_id = layer.customProperty("geolens/dataset_id")
         loaded_from = layer.customProperty("geolens/server")
-        if dataset_id and loaded_from and _server_key(str(loaded_from)) == target:
+        # A selection-only request must export those features, not the dataset.
+        if (
+            dataset_id
+            and loaded_from
+            and layer_id not in selected_ids
+            and _server_key(str(loaded_from)) == target
+        ):
             plan.references.append(
                 Reference(
                     layer_id,

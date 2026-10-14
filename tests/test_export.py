@@ -367,6 +367,14 @@ def test_a_layer_from_the_target_server_becomes_a_reference(tmp_path):
     assert [issue.code for issue in task.result.issues] == ["A034"]
 
 
+def test_a_selected_only_layer_from_the_target_server_is_exported(tmp_path):
+    layer = tagged(memory_layer("Point", "points", rows=4), SERVER)
+    layer.selectByIds([1, 2])
+    task = run([layer], tmp_path, selected_only=[layer.id()])
+    assert task.result.references == []
+    assert feature_count(task.result.exported[0].path) == 2
+
+
 def test_a_layer_from_another_geolens_is_exported(tmp_path):
     layer = tagged(memory_layer("Point", "points"), "https://other.example.org")
     task = run([layer], tmp_path)
