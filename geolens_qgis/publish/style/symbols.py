@@ -161,9 +161,17 @@ def _marker(symbol, layer, style: SymbolStyle, losses: LossLog, where: str) -> N
         to_pixels(layer.size(), layer.sizeUnit(), losses, where) / 2, 2
     )
     style.paint["circle-opacity"] = _opacity(symbol, color)
+    offset = layer.offset()
+    if offset.x() or offset.y():
+        style.paint["circle-translate"] = [
+            to_pixels(offset.x(), layer.offsetUnit(), losses, where),
+            to_pixels(offset.y(), layer.offsetUnit(), losses, where),
+        ]
     if layer.strokeStyle() == Qt.PenStyle.NoPen:
         style.paint["circle-stroke-width"] = 0
         return
+    if layer.strokeStyle() != Qt.PenStyle.SolidLine:
+        losses.add("effect_dropped", where, "outline dash pattern")
     stroke = layer.strokeColor()
     style.paint["circle-stroke-color"] = stroke.name()
     style.paint["circle-stroke-width"] = to_pixels(

@@ -169,6 +169,25 @@ def test_a_marker_in_map_units_keeps_its_number_and_reports_the_unit():
     ]
 
 
+def test_a_marker_offset_becomes_a_translation_in_pixels():
+    layer = make_layer()
+    symbol = marker(
+        color="#ff0000", offset="1,-2", offset_unit="MM", outline_style="no"
+    )
+    layer.setRenderer(QgsSingleSymbolRenderer(symbol))
+    assert convert(layer)[0]["paint"]["circle-translate"] == [3.78, -7.56]
+
+
+def test_a_dashed_marker_outline_is_reported():
+    layer = make_layer()
+    layer.setRenderer(
+        QgsSingleSymbolRenderer(marker(color="#ff0000", outline_style="dash"))
+    )
+    assert convert(layer)[1] == [
+        loss("effect_dropped", "renderer.symbol", "outline dash pattern")
+    ]
+
+
 def test_a_square_marker_is_drawn_as_a_circle_and_reported():
     layer = make_layer()
     layer.setRenderer(QgsSingleSymbolRenderer(marker(name="square", color="#00ff00")))
