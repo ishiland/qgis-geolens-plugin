@@ -172,28 +172,22 @@ def _categorized(layer, renderer, losses: LossLog) -> RenderedStyle:
         losses,
         "renderer.categories",
     )
-    # QGIS keeps the last class for a repeated value.
+    # QGIS keeps the last class for a repeated value, and a NULL class and an
+    # empty-string class are one catch-all for nulls, empty strings and every
+    # value no class lists.
     by_value: dict[Any, _Class] = {}
-    other, null = None, None
+    other = None
     booleans = False
     for category, entry in zip(categories, styles):
         value = category.value()
-        if _is_null(value):
-            null = null or entry
-        elif value == "":
-            other = other or entry
+        if _is_null(value) or value == "":
+            other = entry
         else:
             for item in value if isinstance(value, list) else [value]:
                 booleans = booleans or isinstance(item, bool)
                 by_value[_json_value(item)] = entry
     listed = list(by_value.items())
     fallback = other.style.color if other else FALLBACK_COLOR
-    if null is not None and null.style.color != fallback:
-        losses.add(
-            "null_class_changed",
-            "renderer.categories",
-            f"nulls drawn {null.style.color} in QGIS, {fallback} in GeoLens",
-        )
     result = _base(_lead(styles).style)
     result_kind = styles[0].style.kind
     pairs = [
@@ -219,7 +213,7 @@ def _categorized(layer, renderer, losses: LossLog) -> RenderedStyle:
             for value, entry in listed
         ],
     }
-    result.filter = _category_filter(column, listed, other, null, booleans)
+    result.filter = _category_filter(column, listed, other, booleans)
     return result
 
 
@@ -245,19 +239,17 @@ def _first_class(classes, renderer, losses: LossLog) -> RenderedStyle:
     return _base(convert_symbol(symbol, losses, "renderer.symbol"))
 
 
-def _category_filter(column, listed, other, null, booleans) -> list | None:
-    """Show only what QGIS draws: the enabled classes, and the rest only under an enabled catch-all."""
+def _category_filter(column, listed, other, booleans) -> list | None:
+    """Show only what QGIS draws.
+
+    The enabled classes are drawn; nulls, empty strings and unlisted values only
+    under an enabled catch-all.
+    """
     raw = ["get", column]
     value = ["to-string", raw] if booleans else raw
-    disabled = [v for v, entry in listed if not entry.enabled]
     if other is None or not other.enabled:
-        shown: list = [["in", value, ["literal", [v for v, e in listed if e.enabled]]]]
-        if null is not None and null.enabled:
-            shown.append(["==", raw, None])
-        return ["any", *shown]
-    terms = [["!=", value, v] for v in disabled]
-    if null is not None and not null.enabled:
-        terms.append(["!=", raw, None])
+        return ["any", ["in", value, ["literal", [v for v, e in listed if e.enabled]]]]
+    terms = [["!=", value, v] for v, entry in listed if not entry.enabled]
     return ["all", *terms] if terms else None
 
 

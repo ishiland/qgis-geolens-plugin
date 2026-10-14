@@ -32,6 +32,7 @@ from qgis.core import (  # noqa: E402
     QgsMarkerSymbol,
     QgsPointClusterRenderer,
     QgsPointDisplacementRenderer,
+    QgsRenderContext,
     QgsProperty,
     QgsRasterLayer,
     QgsRendererCategory,
@@ -499,21 +500,80 @@ def test_categorized_describes_classes_and_compiles_the_builders_match():
     assert losses == []
 
 
-def test_a_null_class_the_same_colour_as_the_fallback_is_no_loss():
-    layer = make_layer("Polygon")
-    layer.setRenderer(city_state_renderer(null_color="#999999", other_color="#999999"))
-    assert convert(layer)[1] == []
+def drawn_colors(layer, renderer):
+    """What QGIS draws for 'a', an unlisted value, NULL and ''."""
+    layer.setRenderer(renderer)
+    for value in ("a", "zzz", None, ""):
+        feature = QgsFeature(layer.fields())
+        feature.setAttributes([value])
+        layer.dataProvider().addFeature(feature)
+    context = QgsRenderContext()
+    renderer.startRender(context, layer.fields())
+    colors = []
+    for feature in layer.getFeatures():
+        symbol = renderer.symbolForFeature(feature, context)
+        colors.append(symbol.color().name() if symbol else None)
+    renderer.stopRender(context)
+    return colors
 
 
-def test_a_null_class_with_another_colour_than_the_fallback_is_reported():
+@pytest.mark.parametrize(
+    ("catch_alls", "catch_all_color"),
+    [
+        ([(None, "#ff0000")], "#ff0000"),
+        ([("", "#0000ff")], "#0000ff"),
+        ([(None, "#ff0000"), ("", "#0000ff")], "#0000ff"),
+        ([("", "#0000ff"), (None, "#ff0000")], "#ff0000"),
+        ([], None),
+    ],
+)
+def test_a_null_class_and_an_empty_class_are_one_catch_all_and_the_last_wins(
+    catch_alls, catch_all_color
+):
     layer = make_layer("Polygon")
-    layer.setRenderer(city_state_renderer(null_color="#ff0000", other_color="#999999"))
-    assert convert(layer)[1] == [
-        loss(
-            "null_class_changed",
-            "renderer.categories",
-            "nulls drawn #ff0000 in QGIS, #999999 in GeoLens",
-        )
+    categories = [QgsRendererCategory("a", fill("#4daf4a"), "A")] + [
+        QgsRendererCategory(value, fill(color), "rest") for value, color in catch_alls
+    ]
+    renderer = QgsCategorizedSymbolRenderer("type", categories)
+    assert drawn_colors(layer, renderer) == [
+        "#4daf4a",
+        catch_all_color,
+        catch_all_color,
+        catch_all_color,
+    ]
+    entry, losses = convert(layer)
+    assert losses == []
+    assert entry["style_config"]["categories"] == [
+        {"value": "a", "label": "A", "color": "#4daf4a"}
+    ]
+    if catch_all_color:
+        assert entry["paint"]["fill-color"] == [
+            "case",
+            ["==", ["get", "type"], None],
+            catch_all_color,
+            ["match", ["get", "type"], "a", "#4daf4a", catch_all_color],
+        ]
+        assert entry["filter"] is None
+    else:
+        assert entry["filter"] == ["any", ["in", ["get", "type"], ["literal", ["a"]]]]
+
+
+def test_a_graduated_renderer_draws_no_nulls_and_the_filter_hides_them():
+    layer = pop_layer(values=(5.0, None, -3.0, 5000.0))
+    renderer = graduated("pop", [colored(c) for c in COLORS[:2]], [0, 10, 100])
+    layer.setRenderer(renderer)
+    context = QgsRenderContext()
+    renderer.startRender(context, layer.fields())
+    drawn = [
+        renderer.symbolForFeature(feature, context) is not None
+        for feature in layer.getFeatures()
+    ]
+    renderer.stopRender(context)
+    assert drawn == [True, False, False, False]
+    assert convert(layer)[0]["filter"] == [
+        "all",
+        [">=", ["get", "pop"], 0.0],
+        ["<=", ["get", "pop"], 100.0],
     ]
 
 
@@ -666,7 +726,6 @@ def test_switching_off_the_all_other_class_keeps_only_the_listed_values():
     assert convert(layer)[0]["filter"] == [
         "any",
         ["in", ["get", "type"], ["literal", ["city", "state"]]],
-        ["==", ["get", "type"], None],
     ]
 
 
@@ -708,7 +767,7 @@ def test_categories_of_different_sizes_are_reported():
     ]
 
 
-def test_a_disabled_all_other_class_hides_nulls_unless_a_null_class_is_shown():
+def test_a_disabled_catch_all_hides_nulls_empty_strings_and_unlisted_values():
     layer = make_layer("Polygon")
     renderer = QgsCategorizedSymbolRenderer(
         "type",
