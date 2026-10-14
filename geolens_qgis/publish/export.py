@@ -34,6 +34,7 @@ RASTER = "raster"
 _SERVICE_RASTER_PROVIDERS = {"wms", "wmts", "arcgismapserver", "wcs"}
 _GEOTIFF_SUFFIXES = {".tif", ".tiff"}
 _UNSAFE_FILE_CHARS = re.compile(r'[\x00-\x1f\x7f/\\:*?"<>|]')
+_WINDOWS_DEVICE_NAMES = re.compile(r"(?i)(con|prn|aux|nul|com[1-9]|lpt[1-9])")
 
 
 @dataclass(frozen=True)
@@ -192,6 +193,9 @@ def _empty(layer_id: str, name: str, message: str) -> Issue:
 
 def safe_file_stem(name: str) -> str:
     stem = _UNSAFE_FILE_CHARS.sub("", name).strip().strip(".")
+    # Windows treats these as devices whatever follows the first dot.
+    if _WINDOWS_DEVICE_NAMES.fullmatch(stem.split(".", 1)[0].rstrip()):
+        stem = f"_{stem}"
     return stem or "layer"
 
 
@@ -204,10 +208,12 @@ def _unique_path(folder: Path, stem: str, suffix: str) -> Path:
     return path
 
 
-def sha256_of(path: Path) -> str:
+def sha256_of(path: Path, is_canceled=lambda: False) -> str:
     digest = hashlib.sha256()
     with path.open("rb") as stream:
         for chunk in iter(lambda: stream.read(1 << 20), b""):
+            if is_canceled():
+                raise ExportError("Export canceled.")
             digest.update(chunk)
     return digest.hexdigest()
 
@@ -357,16 +363,19 @@ class ExportTask(QgsTask):
         if path is None:
             suffix = {VECTOR: ".fgb", TABLE: ".gpkg", RASTER: ".tif"}[job.kind]
             path = _unique_path(self.folder, safe_file_stem(job.name), suffix)
-            try:
+        try:
+            if job.existing_geotiff is None:
                 if job.kind == RASTER:
                     _write_raster(job, path, self.transform_context, self.feedback)
                 else:
                     _write_vector(job, path, self.transform_context, self.isCanceled)
-            except ExportError:
-                # Never leave a truncated file where a finished one is expected.
+            size = path.stat().st_size
+            checksum = sha256_of(path, self.isCanceled)
+        except ExportError:
+            # Never leave a truncated file where a finished one is expected.
+            if job.existing_geotiff is None:
                 path.unlink(missing_ok=True)
-                raise
-        size = path.stat().st_size
+            raise
         if self.max_file_size_bytes is not None and size > self.max_file_size_bytes:
             self.result.issues.append(
                 Issue(
@@ -384,6 +393,6 @@ class ExportTask(QgsTask):
             job.kind,
             path,
             size,
-            sha256_of(path),
+            checksum,
             job.existing_geotiff is None,
         )

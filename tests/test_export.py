@@ -146,6 +146,18 @@ def test_cancelling_during_the_write_fails_the_task_and_leaves_no_file(tmp_path)
     assert list((tmp_path / "out").iterdir()) == []
 
 
+def test_cancelling_while_hashing_an_existing_geotiff_fails_the_task(tmp_path):
+    layer = geotiff(tmp_path / "dem.tif")
+    plan = plan_export([layer], SERVER)
+    (tmp_path / "out").mkdir()
+    task = ExportTask(plan, tmp_path / "out", QgsCoordinateTransformContext())
+    states = itertools.chain([False], itertools.repeat(True))
+    task.isCanceled = lambda: next(states)
+    assert task.run() is False
+    assert task.result.exported == []
+    assert (tmp_path / "dem.tif").exists()
+
+
 def test_layer_with_no_selection_is_skipped_when_selected_only(tmp_path):
     layer = memory_layer("Point", "points")
     plan = plan_export([layer], SERVER, [layer.id()])
@@ -242,6 +254,9 @@ def test_a_layer_from_another_geolens_is_exported(tmp_path):
 def test_file_names_drop_control_characters_and_stay_unique(tmp_path):
     assert safe_file_stem("a\x00b/c\nd") == "abcd"
     assert safe_file_stem("..") == "layer"
+    assert safe_file_stem("CON") == "_CON"
+    assert safe_file_stem("com1.parks") == "_com1.parks"
+    assert safe_file_stem("console") == "console"
     layers = [memory_layer("Point", "same"), memory_layer("Point", "same")]
     task = run(layers, tmp_path)
     assert sorted(item.path.name for item in task.result.exported) == [
