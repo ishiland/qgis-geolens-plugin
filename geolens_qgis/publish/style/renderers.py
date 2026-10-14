@@ -91,6 +91,12 @@ class _Class:
     style: SymbolStyle
     label: str
     enabled: bool
+    drawable: bool = True
+
+
+def _lead(styles: list["_Class"]) -> "_Class":
+    """The class whose symbol the layer's shared look comes from."""
+    return next((entry for entry in styles if entry.drawable), styles[0])
 
 
 def _class_styles(
@@ -101,18 +107,20 @@ def _class_styles(
     Classes may differ from the first only in colour, and in size when the
     renderer can vary it.
     """
-    classes = []
+    classes: list[_Class] = []
+    lead = None
     for index, (symbol, label, enabled) in enumerate(items):
         path = f"{where}[{index}]"
         style = convert_symbol(symbol, losses, path)
-        if style.color is None:
+        drawable = style.color is not None
+        if not drawable:
             # A symbol with nothing to draw is a class that shows nothing.
             style.color, enabled = FALLBACK_COLOR, False
-        elif classes and style.fixed(not size_varies) != classes[0].style.fixed(
-            not size_varies
-        ):
+        elif lead is None:
+            lead = style
+        elif style.fixed(not size_varies) != lead.fixed(not size_varies):
             losses.add("symbol_layer_dropped", path, "differs in more than colour")
-        classes.append(_Class(style, label, enabled))
+        classes.append(_Class(style, label, enabled, drawable))
     return classes
 
 
@@ -140,13 +148,13 @@ def _categorized(layer, renderer, losses: LossLog) -> RenderedStyle:
     booleans = False
     for category, entry in zip(categories, styles):
         value = category.value()
-        booleans = booleans or isinstance(value, bool)
         if _is_null(value):
             null = null or entry
         elif value == "":
             other = other or entry
         else:
             for item in value if isinstance(value, list) else [value]:
+                booleans = booleans or isinstance(item, bool)
                 item = _json_value(item)
                 if item not in seen:
                     seen.add(item)
@@ -158,7 +166,8 @@ def _categorized(layer, renderer, losses: LossLog) -> RenderedStyle:
             "renderer.categories",
             f"nulls drawn {null.style.color} in QGIS, {fallback} in GeoLens",
         )
-    result = _base(styles[0].style)
+    result = _base(_lead(styles).style)
+    result_kind = styles[0].style.kind
     pairs = [
         value_color
         for value, entry in listed
@@ -172,7 +181,7 @@ def _categorized(layer, renderer, losses: LossLog) -> RenderedStyle:
         color_expression.append(["match", subject, *pairs, fallback])
     else:
         color_expression = fallback
-    result.paint[COLOR_PROPERTY[styles[0].style.kind]] = color_expression
+    result.paint[COLOR_PROPERTY[result_kind]] = color_expression
     result.style_config = {
         **(result.style_config or {}),
         "mode": "categorical",
@@ -277,14 +286,21 @@ def _graduated(layer, renderer, losses: LossLog) -> RenderedStyle:
     edges = [r.upperValue() for r in ranges[:-1]]
     breaks = _shift_breaks(layer, column, edges, losses)
     kind = styles[0].style.kind
+    lead = _lead(styles)
+    # Switched-off and empty classes draw nothing, so they don't decide the target.
+    shown = [entry for entry in styles if entry.enabled and entry.drawable] or [lead]
     colors = [entry.style.color for entry in styles]
-    sizes = [entry.style.size for entry in styles]
-    sized = all(size is not None for size in sizes)
-    size_varies = kind in SIZE_PROPERTY and sized and len(set(sizes)) > 1
-    color_varies = len(set(colors)) > 1
+    shown_sizes = [entry.style.size for entry in shown]
+    sized = all(size is not None for size in shown_sizes)
+    size_varies = kind in SIZE_PROPERTY and sized and len(set(shown_sizes)) > 1
+    color_varies = len({entry.style.color for entry in shown}) > 1
+    sizes = [
+        entry.style.size if entry.style.size is not None else shown_sizes[0]
+        for entry in styles
+    ]
     if size_varies and color_varies:
         losses.add("unsupported_renderer", "renderer", "graduated size+color")
-    result = _base(styles[0].style)
+    result = _base(lead.style)
     config: dict[str, Any] = {
         **(result.style_config or {}),
         "mode": "graduated",

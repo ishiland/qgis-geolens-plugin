@@ -515,6 +515,35 @@ def test_a_class_with_nothing_to_draw_is_hidden_and_keeps_a_valid_colour():
     assert entry["filter"] == ["any", ["in", ["get", "type"], ["literal", ["a"]]]]
 
 
+def test_an_empty_first_class_does_not_blank_the_layer_look():
+    layer = make_layer("Polygon")
+    empty = fill("#4daf4a")
+    empty.symbolLayer(0).setEnabled(False)
+    renderer = QgsCategorizedSymbolRenderer(
+        "type",
+        [
+            QgsRendererCategory("a", empty, "A"),
+            QgsRendererCategory("b", fill("#ff0000"), "B"),
+        ],
+    )
+    layer.setRenderer(renderer)
+    entry, losses = convert(layer)
+    assert entry["paint"]["fill-opacity"] == 1.0
+    assert losses == []
+
+
+def test_booleans_inside_a_multi_value_class_match_on_text():
+    layer = make_layer("Polygon")
+    renderer = QgsCategorizedSymbolRenderer(
+        "type", [QgsRendererCategory([True, False], fill("#4daf4a"), "Any")]
+    )
+    layer.setRenderer(renderer)
+    assert convert(layer)[0]["paint"]["fill-color"][3][1] == [
+        "to-string",
+        ["get", "type"],
+    ]
+
+
 def test_a_hidden_boolean_class_filters_on_its_text():
     layer = make_layer("Polygon")
     renderer = QgsCategorizedSymbolRenderer(
@@ -764,6 +793,20 @@ def test_graduated_size_drives_the_radius_when_colour_is_constant():
         ["step", ["get", "pop"], 3.78, NEXT_10, 7.56, NEXT_100, 15.12],
     ]
     assert entry["paint"]["circle-color"] == "#ff0000"
+    assert losses == []
+
+
+def test_a_switched_off_range_does_not_decide_the_graduation_target():
+    layer = pop_layer()
+    symbols = [
+        marker(color=c, size=str(s), outline_style="no")
+        for c, s in (("#ff0000", 2), ("#ff0000", 4), ("#00ff00", 8))
+    ]
+    renderer = graduated("pop", symbols, [0, 10, 100, 1000])
+    renderer.updateRangeRenderState(2, False)
+    layer.setRenderer(renderer)
+    entry, losses = convert(layer)
+    assert entry["style_config"]["target"] == "radius"
     assert losses == []
 
 
