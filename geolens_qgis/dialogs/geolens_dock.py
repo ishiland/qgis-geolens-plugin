@@ -313,7 +313,7 @@ class GeoLensDock(QDockWidget):
             # up again instead of touching the stale wrapper.
             live = QgsProject.instance().mapLayer(layer_id)
             if not live:
-                self.refresh_timers.pop(layer_id, None)
+                self._drop_refresh_timer(layer_id)
                 return
             try:
                 renewed = client.tile_source(dataset.id)
@@ -324,10 +324,14 @@ class GeoLensDock(QDockWidget):
 
         timer.timeout.connect(refresh)
         timer.start(seconds * 1000)
-        old = self.refresh_timers.pop(layer_id, None)
-        if old:
-            old.stop()
+        self._drop_refresh_timer(layer_id)
         self.refresh_timers[layer_id] = timer
+
+    def _drop_refresh_timer(self, layer_id):
+        timer = self.refresh_timers.pop(layer_id, None)
+        if timer:
+            timer.stop()
+            timer.deleteLater()
 
     def _current_bbox(self):
         extent = self.iface.mapCanvas().extent()
