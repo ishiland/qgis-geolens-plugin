@@ -147,6 +147,17 @@ def plan_export(
 def _classify(layer, selected_only: bool, issues: list[Issue]) -> PlannedLayer | None:
     layer_id, name = layer.id(), layer.name()
     layer_type = layer.type()
+    if not layer.isValid():
+        issues.append(
+            Issue(
+                "A030",
+                "warning",
+                layer_id,
+                name,
+                "This layer's data source is unavailable, so it will be skipped.",
+            )
+        )
+        return None
     if layer_type == Qgis.LayerType.Vector:
         if layer.featureCount() == 0:
             issues.append(_empty(layer_id, name, "Layer is empty and will be skipped."))

@@ -310,6 +310,20 @@ def test_layer_types_geolens_cannot_take_are_reported(tmp_path):
     ]
 
 
+def test_layers_whose_source_is_unavailable_are_skipped_not_fatal(tmp_path):
+    broken = [
+        QgsRasterLayer(str(tmp_path / "missing.tif"), "gone"),
+        QgsVectorLayer(str(tmp_path / "missing.gpkg"), "lost", "ogr"),
+    ]
+    good = memory_layer("Point", "points")
+    task = run([*broken, good], tmp_path)
+    assert [item.layer_name for item in task.result.exported] == ["points"]
+    assert [(i.code, i.layer_name) for i in task.result.issues] == [
+        ("A030", "gone"),
+        ("A030", "lost"),
+    ]
+
+
 def tagged(layer, server, dataset_id="abc"):
     layer.setCustomProperty("geolens/server", server)
     layer.setCustomProperty("geolens/dataset_id", dataset_id)
