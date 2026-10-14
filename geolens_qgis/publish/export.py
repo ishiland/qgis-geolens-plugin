@@ -295,7 +295,9 @@ def _geotiff_path(layer) -> Path | None:
     """The layer's own GeoTIFF, when that file alone describes the raster.
 
     GDAL lists every file a dataset depends on, so a TIFF that also needs a
-    world file, PAM or other sidecar is rewritten instead of uploaded bare.
+    world file, PAM or other sidecar is rewritten instead of uploaded bare. So
+    is one whose layer CRS was overridden in QGIS, since the file would still
+    carry the old projection.
     """
     from osgeo import gdal
 
@@ -303,6 +305,8 @@ def _geotiff_path(layer) -> Path | None:
         return None
     path = Path(layer.source().split("|", 1)[0])
     if path.suffix.lower() not in _GEOTIFF_SUFFIXES or not path.is_file():
+        return None
+    if layer.crs() != layer.dataProvider().crs():
         return None
     dataset = gdal.Open(str(path))
     if dataset is None:
@@ -315,15 +319,20 @@ def _geotiff_path(layer) -> Path | None:
 def _write_raster(job: _Job, path: Path, transform_context, feedback) -> None:
     writer = QgsRasterFileWriter(str(path))
     writer.setOutputFormat("GTiff")
-    result = writer.writeRaster(
-        job.pipe,
-        job.columns,
-        job.rows,
-        job.extent,
-        job.crs,
-        transform_context,
-        feedback,
-    )
+    # The pipe was detached from the GUI thread when the task was made.
+    job.pipe.moveToThread(QThread.currentThread())
+    try:
+        result = writer.writeRaster(
+            job.pipe,
+            job.columns,
+            job.rows,
+            job.extent,
+            job.crs,
+            transform_context,
+            feedback,
+        )
+    finally:
+        job.pipe.moveToThread(None)
     if result != Qgis.RasterFileWriterResult.Success:
         raise ExportError(f"Could not export {job.name}")
 

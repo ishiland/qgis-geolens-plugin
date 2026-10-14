@@ -8,6 +8,8 @@ import pytest
 pytest.importorskip("pytest_qgis")
 
 from qgis.core import (  # noqa: E402
+    Qgis,
+    QgsCoordinateReferenceSystem,
     QgsApplication,
     QgsCoordinateTransformContext,
     QgsFeature,
@@ -19,6 +21,9 @@ from qgis.core import (  # noqa: E402
     QgsVectorTileLayer,
 )
 
+from qgis.PyQt.QtCore import QThread  # noqa: E402
+
+from geolens_qgis.publish import export  # noqa: E402
 from geolens_qgis.publish.export import (  # noqa: E402
     ExportTask,
     plan_export,
@@ -222,6 +227,40 @@ def test_a_geotiff_georeferenced_by_a_world_file_is_rewritten(tmp_path):
     layer = QgsRasterLayer(str(tmp_path / "scan.tif"), "scan")
     (exported,) = run([layer], tmp_path).result.exported
     assert exported.temporary
+
+
+def test_a_geotiff_whose_layer_crs_was_overridden_is_rewritten(tmp_path):
+    layer = geotiff(tmp_path / "dem.tif")
+    layer.setCrs(QgsCoordinateReferenceSystem("EPSG:3857"))
+    (exported,) = run([layer], tmp_path).result.exported
+    assert exported.temporary
+    assert QgsRasterLayer(str(exported.path)).crs().authid() == "EPSG:3857"
+
+
+def test_the_raster_pipe_belongs_to_the_writing_thread_only_while_writing(
+    tmp_path, monkeypatch
+):
+    calls = []
+
+    class Pipe:
+        def moveToThread(self, thread):
+            calls.append(("move", thread))
+
+    class Writer:
+        def __init__(self, path):
+            pass
+
+        def setOutputFormat(self, name):
+            pass
+
+        def writeRaster(self, pipe, *args):
+            calls.append(("write",))
+            return Qgis.RasterFileWriterResult.Success
+
+    monkeypatch.setattr(export, "QgsRasterFileWriter", Writer)
+    job = export._Job("id", "dem", "raster", pipe=Pipe())
+    export._write_raster(job, tmp_path / "dem.tif", None, None)
+    assert calls == [("move", QThread.currentThread()), ("write",), ("move", None)]
 
 
 def test_other_rasters_are_written_as_geotiff(tmp_path):
