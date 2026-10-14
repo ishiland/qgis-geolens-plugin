@@ -371,7 +371,7 @@ class ExportTask(QgsTask):
                     _write_vector(job, path, self.transform_context, self.isCanceled)
             size = path.stat().st_size
             checksum = sha256_of(path, self.isCanceled)
-        except ExportError:
+        except (ExportError, OSError):
             # Never leave a truncated file where a finished one is expected.
             if job.existing_geotiff is None:
                 path.unlink(missing_ok=True)

@@ -158,6 +158,22 @@ def test_cancelling_while_hashing_an_existing_geotiff_fails_the_task(tmp_path):
     assert (tmp_path / "dem.tif").exists()
 
 
+def test_a_filesystem_error_after_writing_removes_the_partial_file(
+    tmp_path, monkeypatch
+):
+    plan = plan_export([memory_layer("Point", "points")], SERVER)
+    (tmp_path / "out").mkdir()
+    task = ExportTask(plan, tmp_path / "out", QgsCoordinateTransformContext())
+
+    def unreadable(*_):
+        raise OSError("unreadable")
+
+    monkeypatch.setattr("geolens_qgis.publish.export.sha256_of", unreadable)
+    assert task.run() is False
+    assert task.error == "unreadable"
+    assert list((tmp_path / "out").iterdir()) == []
+
+
 def test_layer_with_no_selection_is_skipped_when_selected_only(tmp_path):
     layer = memory_layer("Point", "points")
     plan = plan_export([layer], SERVER, [layer.id()])
