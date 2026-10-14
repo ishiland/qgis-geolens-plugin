@@ -322,6 +322,12 @@ def _heatmap(layer, renderer, losses: LossLog) -> RenderedStyle:
         losses.add(
             "raster_renderer_approximated", "renderer.colorRamp", f"drawn with {name}"
         )
+    if renderer.maximumValue():
+        losses.add(
+            "raster_renderer_approximated",
+            "renderer.maximumValue",
+            "fixed maximum value not carried over",
+        )
     radius = to_pixels(
         renderer.radius(), renderer.radiusUnit(), losses, "renderer.radius"
     )

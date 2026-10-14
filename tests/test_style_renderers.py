@@ -31,10 +31,12 @@ from qgis.core import (  # noqa: E402
     QgsMarkerSymbol,
     QgsPointClusterRenderer,
     QgsPointDisplacementRenderer,
+    QgsProperty,
     QgsRasterLayer,
     QgsRendererCategory,
     QgsRendererRange,
     QgsSingleSymbolRenderer,
+    QgsSymbol,
     QgsVectorLayer,
 )
 from qgis.PyQt.QtCore import QDate, QVariant  # noqa: E402
@@ -226,6 +228,30 @@ def test_polygon_with_no_fill_or_no_outline_sets_the_disabled_flags():
     assert convert(layer)[0]["style_config"]["builder"]["fillDisabled"] is True
     layer.setRenderer(QgsSingleSymbolRenderer(fill("#4daf4a", outline_style="no")))
     assert convert(layer)[0]["style_config"] == {"builder": {"strokeDisabled": True}}
+
+
+def test_symbol_opacity_over_an_opaque_outline_is_reported():
+    layer = make_layer("Polygon")
+    symbol = fill("#4daf4a")
+    symbol.setOpacity(0.5)
+    layer.setRenderer(QgsSingleSymbolRenderer(symbol))
+    assert convert(layer)[1] == [
+        loss(
+            "effect_dropped", "renderer.symbol", "outline dash pattern or transparency"
+        )
+    ]
+
+
+def test_data_defined_symbol_opacity_is_reported():
+    layer = make_layer("Polygon", fields=(("alpha", "d"),))
+    symbol = fill("#4daf4a")
+    symbol.setDataDefinedProperty(
+        QgsSymbol.Property.Opacity, QgsProperty.fromField("alpha")
+    )
+    layer.setRenderer(QgsSingleSymbolRenderer(symbol))
+    assert [item["kind"] for item in convert(layer)[1]] == [
+        "expression_not_representable"
+    ]
 
 
 def test_a_dashed_outline_is_reported():
@@ -719,6 +745,20 @@ def test_heatmap_with_a_custom_ramp_is_drawn_with_the_nearest_named_one():
         losses[0]["detail"]
         == f"drawn with {entry['style_config']['builder']['heatmapRamp']}"
     )
+
+
+def test_a_fixed_heatmap_maximum_is_reported():
+    layer = pop_layer()
+    renderer = heatmap(ramp_colors("Blues"))
+    renderer.setMaximumValue(50)
+    layer.setRenderer(renderer)
+    assert convert(layer)[1] == [
+        loss(
+            "raster_renderer_approximated",
+            "renderer.maximumValue",
+            "fixed maximum value not carried over",
+        )
+    ]
 
 
 def test_a_translucent_heatmap_ramp_is_reported_even_when_the_colours_match():

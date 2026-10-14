@@ -61,11 +61,12 @@ def _opacity(symbol, color) -> float:
     return round(symbol.opacity() * color.alphaF(), 3)
 
 
-def _data_defined(symbol_layer, losses: LossLog, where: str) -> None:
-    properties = symbol_layer.dataDefinedProperties()
+def _data_defined(owner, losses: LossLog, where: str) -> None:
+    """Report data-defined properties of a symbol or one of its layers."""
+    properties = owner.dataDefinedProperties()
     if not properties.hasActiveProperties():
         return
-    definitions = symbol_layer.propertyDefinitions()
+    definitions = owner.propertyDefinitions()
     names = []
     for key in properties.propertyKeys():
         if properties.property(key).isActive():
@@ -110,7 +111,7 @@ def _fill(symbol, layer, style: SymbolStyle, losses: LossLog, where: str) -> Non
     style.builder["outlineWidth"] = to_pixels(
         outline_width, outline_unit, losses, where
     )
-    if outline_style != Qt.PenStyle.SolidLine or outline_color.alphaF() < 1:
+    if outline_style != Qt.PenStyle.SolidLine or _opacity(symbol, outline_color) < 1:
         losses.add("effect_dropped", where, "outline dash pattern or transparency")
 
 
@@ -202,6 +203,7 @@ def convert_symbol(symbol, losses: LossLog, where: str) -> SymbolStyle:
     _CONVERTERS[kind](symbol, primary, style, losses, where)
     for extra in layers[1:]:
         losses.add("symbol_layer_dropped", where, extra.layerType())
+    _data_defined(symbol, losses, where)
     for symbol_layer in layers:
         _data_defined(symbol_layer, losses, where)
         effect = symbol_layer.paintEffect()
