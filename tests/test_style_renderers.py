@@ -21,6 +21,7 @@ from qgis.core import (  # noqa: E402
     QgsEditorWidgetSetup,
     QgsFeature,
     QgsField,
+    QgsFeatureRenderer,
     QgsFillSymbol,
     QgsFontMarkerSymbolLayer,
     QgsGradientColorRamp,
@@ -187,6 +188,24 @@ def test_a_dashed_marker_outline_is_reported():
     )
     assert convert(layer)[1] == [
         loss("effect_dropped", "renderer.symbol", "outline dash pattern")
+    ]
+
+
+def test_a_symbol_with_no_layers_draws_nothing():
+    layer = make_layer()
+    symbol = marker(color="#ff0000")
+    symbol.deleteSymbolLayer(0)
+    layer.setRenderer(QgsSingleSymbolRenderer(symbol))
+    assert convert(layer)[0]["paint"] == {"circle-opacity": 0}
+
+
+def test_a_renderer_reference_scale_is_reported():
+    layer = make_layer()
+    renderer = QgsSingleSymbolRenderer(marker(color="#ff0000", outline_style="no"))
+    renderer.setReferenceScale(25000)
+    layer.setRenderer(renderer)
+    assert convert(layer)[1] == [
+        loss("unit_not_representable", "renderer", "reference scale sizing")
     ]
 
 
@@ -778,6 +797,18 @@ def test_heatmap_with_a_custom_ramp_is_drawn_with_the_nearest_named_one():
         losses[0]["detail"]
         == f"drawn with {entry['style_config']['builder']['heatmapRamp']}"
     )
+
+
+def test_a_data_defined_heatmap_radius_is_reported():
+    layer = pop_layer()
+    renderer = heatmap(ramp_colors("Blues"))
+    renderer.setDataDefinedProperty(
+        QgsFeatureRenderer.Property.HeatmapRadius, QgsProperty.fromField("pop")
+    )
+    layer.setRenderer(renderer)
+    assert [item["kind"] for item in convert(layer)[1]] == [
+        "expression_not_representable"
+    ]
 
 
 def test_a_fixed_heatmap_maximum_is_reported():

@@ -30,6 +30,11 @@ _JOINS = {
 
 # Each geometry's colour property and the property a size-driven class varies.
 COLOR_PROPERTY = {"fill": "fill-color", "line": "line-color", "marker": "circle-color"}
+OPACITY_PROPERTY = {
+    "fill": "fill-opacity",
+    "line": "line-opacity",
+    "marker": "circle-opacity",
+}
 SIZE_PROPERTY = {"line": "line-width", "marker": "circle-radius"}
 
 
@@ -203,7 +208,8 @@ def convert_symbol(symbol, losses: LossLog, where: str) -> SymbolStyle:
     style = SymbolStyle(kind)
     layers = symbol.symbolLayers()
     if not layers:
-        style.color = symbol.color().name()
+        # Nothing to draw: keep it invisible rather than letting MapLibre's defaults show it.
+        style.paint[OPACITY_PROPERTY[kind]] = 0
         return style
     primary = layers[0]
     _CONVERTERS[kind](symbol, primary, style, losses, where)

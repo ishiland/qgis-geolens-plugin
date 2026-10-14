@@ -326,6 +326,12 @@ def _heatmap(layer, renderer, losses: LossLog) -> RenderedStyle:
         losses.add(
             "raster_renderer_approximated", "renderer.colorRamp", f"drawn with {name}"
         )
+    if renderer.dataDefinedProperties().hasActiveProperties():
+        losses.add(
+            "expression_not_representable",
+            "renderer",
+            "data-defined heatmap radius or maximum",
+        )
     if renderer.maximumValue():
         losses.add(
             "raster_renderer_approximated",
@@ -410,6 +416,8 @@ def convert_renderer(layer, losses: LossLog) -> RenderedStyle:
     if convert is None:
         return _unsupported(renderer, losses, kind)
     style = convert(layer, renderer, losses)
+    if renderer.referenceScale() > 0:
+        losses.add("unit_not_representable", "renderer", "reference scale sizing")
     if renderer.usingSymbolLevels():
         losses.add("effect_dropped", "renderer", "symbol levels")
     effect = renderer.paintEffect()
