@@ -290,6 +290,13 @@ def _snapshot(planned: PlannedLayer) -> _Job:
     return job
 
 
+def _free_name(fields, name: str) -> str:
+    taken = {field.name().lower() for field in fields}
+    while name.lower() in taken:
+        name = f"_{name}"
+    return name
+
+
 def _write_vector(job: _Job, path: Path, transform_context, is_canceled) -> None:
     options = QgsVectorFileWriter.SaveVectorOptions()
     options.driverName = "GPKG" if job.kind == TABLE else "FlatGeobuf"
@@ -297,6 +304,9 @@ def _write_vector(job: _Job, path: Path, transform_context, is_canceled) -> None
     if job.kind == VECTOR:
         # FlatGeobuf refuses features with no geometry while it builds an index.
         options.layerOptions = ["SPATIAL_INDEX=NO"]
+    elif job.kind == TABLE:
+        # The driver would adopt a source field called "fid" as its primary key.
+        options.layerOptions = [f"FID={_free_name(job.fields, '_geolens_fid')}"]
     # A GeoPackage names its table; FlatGeobuf takes the file name. SQLite
     # keeps the sqlite_ prefix for itself.
     options.layerName = (

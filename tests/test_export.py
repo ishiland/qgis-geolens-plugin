@@ -133,6 +133,20 @@ def test_a_table_named_like_a_sqlite_internal_table_still_exports(tmp_path):
     assert feature_count(exported.path) == 3
 
 
+def test_a_table_with_a_text_field_named_fid_still_exports(tmp_path):
+    layer = QgsVectorLayer("NoGeometry?field=fid:string", "ids", "memory")
+    rows = []
+    for value in ("a", "a"):
+        feature = QgsFeature(layer.fields())
+        feature.setAttributes([value])
+        rows.append(feature)
+    layer.dataProvider().addFeatures(rows)
+    (exported,) = run([layer], tmp_path).result.exported
+    check = QgsVectorLayer(str(exported.path), "check", "ogr")
+    assert check.featureCount() == 2
+    assert [f["fid"] for f in check.getFeatures()] == ["a", "a"]
+
+
 def test_selected_features_only(tmp_path):
     layer = memory_layer("Point", "points", rows=5)
     layer.selectByIds([1, 2])
