@@ -6,7 +6,12 @@ import math
 from dataclasses import dataclass, field
 from typing import Any
 
-from qgis.core import QgsExpression, QgsFeatureRequest, QgsRenderContext
+from qgis.core import (
+    QgsExpression,
+    QgsFeatureRequest,
+    QgsRenderContext,
+    QgsSimpleMarkerSymbolLayerBase,
+)
 from qgis.PyQt.QtCore import Qt
 
 from .loss import LossLog
@@ -19,7 +24,7 @@ from .symbols import (
     hidden_style,
     symbol_kind,
 )
-from .units import to_pixels
+from .units import enum_name, to_pixels
 
 FALLBACK_COLOR = "#cccccc"
 DEFAULT_HEATMAP_RAMP = "YlOrRd"
@@ -434,6 +439,15 @@ def _cluster(renderer, losses: LossLog) -> RenderedStyle:
     )
     if drawn:
         builder["clusterColor"] = drawn[0].color().name()
+        first = drawn[0]
+        if first.layerType() != "SimpleMarker":
+            losses.add("icon_not_uploaded", "renderer.clusterSymbol", first.layerType())
+        elif first.shape() != QgsSimpleMarkerSymbolLayerBase.Shape.Circle:
+            losses.add(
+                "marker_shape_approximated",
+                "renderer.clusterSymbol",
+                enum_name(first.shape()),
+            )
         losses.add(
             "effect_dropped",
             "renderer.clusterSymbol",

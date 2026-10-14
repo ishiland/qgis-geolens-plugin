@@ -1161,6 +1161,24 @@ def test_a_translucent_cluster_symbol_is_reported():
     ]
 
 
+def test_a_non_circle_or_icon_cluster_symbol_is_reported():
+    for symbol, kind in (
+        (marker(name="square", color="#0000ff"), "marker_shape_approximated"),
+        (QgsMarkerSymbol.createSimple({}), "icon_not_uploaded"),
+    ):
+        if kind == "icon_not_uploaded":
+            symbol.changeSymbolLayer(
+                0, QgsFontMarkerSymbolLayer("Arial", "A", 8, QColor("#0000ff"))
+            )
+        layer = pop_layer()
+        renderer = QgsPointClusterRenderer()
+        renderer.setEmbeddedRenderer(QgsSingleSymbolRenderer(colored("#ff0000")))
+        renderer.setClusterSymbol(symbol)
+        layer.setRenderer(renderer)
+        kinds = [item["kind"] for item in convert(layer)[1]]
+        assert kind in kinds
+
+
 def test_a_disabled_cluster_symbol_layer_is_ignored():
     layer = pop_layer()
     renderer = QgsPointClusterRenderer()
