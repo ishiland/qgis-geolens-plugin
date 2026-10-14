@@ -80,6 +80,8 @@ def convert_layer(
     Exactly one of `dataset_key` and `dataset_id` names the dataset. `path` is
     the layer's place in the manifest, which prefixes each loss item's path.
     """
+    if (dataset_key is None) == (dataset_id is None):
+        raise ValueError("give exactly one of dataset_key and dataset_id")
     if type(layer).__name__ != "QgsVectorLayer":
         raise TypeError("only vector layers can be converted")
     losses = LossLog(f"{path}.style")

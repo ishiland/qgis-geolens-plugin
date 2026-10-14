@@ -1059,6 +1059,19 @@ def test_a_ramp_that_starts_translucent_is_reported():
     ]
 
 
+def test_a_discrete_heatmap_ramp_is_reported():
+    layer = pop_layer()
+    colors = ramp_colors("Blues")
+    ramp = gradient(colors)
+    ramp.setDiscrete(True)
+    renderer = heatmap(colors)
+    renderer.setColorRamp(ramp)
+    layer.setRenderer(renderer)
+    assert [item["kind"] for item in convert(layer)[1]] == [
+        "raster_renderer_approximated"
+    ]
+
+
 def test_a_fixed_heatmap_maximum_is_reported():
     layer = pop_layer()
     renderer = heatmap(ramp_colors("Blues"))
@@ -1268,6 +1281,15 @@ def test_a_dataset_id_replaces_the_dataset_key():
     )
     jsonschema.validate(entry, LAYER_SCHEMA)
     assert "dataset_key" not in entry
+
+
+def test_exactly_one_dataset_reference_is_required():
+    for kwargs in (
+        {},
+        {"dataset_key": "qgis-1", "dataset_id": "5d1f0e2a-7c3b-4a9d-b2e1-0c8f6a4d3b21"},
+    ):
+        with pytest.raises(ValueError):
+            convert_layer(make_layer(), key="parks", **kwargs)
 
 
 def test_only_vector_layers_convert():

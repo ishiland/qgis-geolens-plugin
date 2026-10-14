@@ -376,6 +376,8 @@ def _heatmap(layer, renderer, losses: LossLog) -> RenderedStyle:
         colors = [ramp.color(i / (HEATMAP_SAMPLES - 1)) for i in range(HEATMAP_SAMPLES)]
         name, reverse, error = nearest_ramp([color.name() for color in colors])
         translucent = any(color.alpha() < 255 for color in colors)
+        # A stepped ramp has no smooth equivalent in the heatmap's interpolation.
+        translucent = translucent or bool(getattr(ramp, "isDiscrete", lambda: False)())
     if error > RAMP_MATCH_TOLERANCE or translucent:
         losses.add(
             "raster_renderer_approximated", "renderer.colorRamp", f"drawn with {name}"
