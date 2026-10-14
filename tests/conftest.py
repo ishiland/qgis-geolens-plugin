@@ -87,6 +87,7 @@ def _install_qgis_stub():
         "QgsTask",
         "QgsVectorFileWriter",
         "QgsVectorLayer",
+        "QgsVectorLayerFeatureSource",
         "QgsVectorTileLayer",
     ):
         setattr(core, name, _Placeholder)
