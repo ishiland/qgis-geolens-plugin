@@ -33,6 +33,12 @@ RASTER = "raster"
 # Raster providers that stream tiles from a service instead of reading data.
 _SERVICE_RASTER_PROVIDERS = {"wms", "wmts", "arcgismapserver", "wcs"}
 _GEOTIFF_SUFFIXES = {".tif", ".tiff"}
+# Files GDAL reads next to a TIFF that can change what it means; uploading the
+# TIFF alone would drop them.
+_SIDECAR_SUFFIXES = (".tfw", ".tifw", ".wld", ".prj")
+_SIDECAR_APPENDED = (".aux.xml", ".msk", ".ovr")
+# Leaves room for the extension and a uniqueness counter in a 255 byte name.
+_MAX_STEM_BYTES = 200
 _UNSAFE_FILE_CHARS = re.compile(r'[\x00-\x1f\x7f/\\:*?"<>|]')
 _WINDOWS_DEVICE_NAMES = re.compile(r"(?i)(con|prn|aux|nul|com[1-9]|lpt[1-9])")
 
@@ -196,7 +202,8 @@ def safe_file_stem(name: str) -> str:
     # Windows treats these as devices whatever follows the first dot.
     if _WINDOWS_DEVICE_NAMES.fullmatch(stem.split(".", 1)[0].rstrip()):
         stem = f"_{stem}"
-    return stem or "layer"
+    stem = stem.encode("utf-8")[:_MAX_STEM_BYTES].decode("utf-8", errors="ignore")
+    return stem.strip().strip(".") or "layer"
 
 
 def _unique_path(folder: Path, stem: str, suffix: str) -> Path:
@@ -290,9 +297,11 @@ def _geotiff_path(layer) -> Path | None:
     if layer.providerType() != "gdal":
         return None
     path = Path(layer.source().split("|", 1)[0])
-    if path.suffix.lower() in _GEOTIFF_SUFFIXES and path.is_file():
-        return path
-    return None
+    if path.suffix.lower() not in _GEOTIFF_SUFFIXES or not path.is_file():
+        return None
+    sidecars = [path.with_suffix(suffix) for suffix in _SIDECAR_SUFFIXES]
+    sidecars += [path.with_name(path.name + suffix) for suffix in _SIDECAR_APPENDED]
+    return None if any(sidecar.exists() for sidecar in sidecars) else path
 
 
 def _write_raster(job: _Job, path: Path, transform_context, feedback) -> None:

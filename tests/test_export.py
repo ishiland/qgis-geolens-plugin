@@ -198,6 +198,16 @@ def test_geotiff_is_uploaded_as_it_is(tmp_path):
     assert exported.sha256 == hashlib.sha256(exported.path.read_bytes()).hexdigest()
 
 
+@pytest.mark.parametrize("sidecar", ["dem.tfw", "dem.tif.aux.xml", "dem.prj"])
+def test_a_geotiff_with_sidecar_files_is_rewritten(sidecar, tmp_path):
+    layer = geotiff(tmp_path / "dem.tif")
+    (tmp_path / sidecar).write_text("<x/>")
+    task = run([layer], tmp_path)
+    (exported,) = task.result.exported
+    assert exported.temporary
+    assert exported.path.parent == tmp_path / "out"
+
+
 def test_other_rasters_are_written_as_geotiff(tmp_path):
     from osgeo import gdal
 
@@ -273,6 +283,8 @@ def test_file_names_drop_control_characters_and_stay_unique(tmp_path):
     assert safe_file_stem("CON") == "_CON"
     assert safe_file_stem("com1.parks") == "_com1.parks"
     assert safe_file_stem("console") == "console"
+    long = safe_file_stem("é" * 300)
+    assert len(long.encode("utf-8")) <= 200
     layers = [memory_layer("Point", "same"), memory_layer("Point", "same")]
     task = run(layers, tmp_path)
     assert sorted(item.path.name for item in task.result.exported) == [
