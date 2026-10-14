@@ -320,6 +320,37 @@ def test_zero_width_lines_and_outlines_are_one_pixel_hairlines():
     assert entry["style_config"]["builder"]["outlineWidth"] == 1.0
 
 
+def test_a_layer_without_a_renderer_reports_an_unsupported_renderer():
+    layer = make_layer()
+    layer.setRenderer(None)
+    entry, losses = convert(layer)
+    assert entry["paint"] == {}
+    assert losses == [loss("unsupported_renderer", "renderer", "none")]
+
+
+def test_a_zero_width_marker_outline_is_a_one_pixel_hairline():
+    layer = make_layer()
+    layer.setRenderer(
+        QgsSingleSymbolRenderer(marker(color="#ff0000", outline_width="0"))
+    )
+    assert convert(layer)[0]["paint"]["circle-stroke-width"] == 1.0
+
+
+def test_a_shadowed_duplicate_class_does_not_set_the_shared_look():
+    layer = make_layer("Polygon")
+    hidden = fill("#4daf4a")
+    hidden.setOpacity(0.0)
+    renderer = QgsCategorizedSymbolRenderer(
+        "type",
+        [
+            QgsRendererCategory("a", hidden, "first"),
+            QgsRendererCategory("a", fill("#ff0000"), "second"),
+        ],
+    )
+    layer.setRenderer(renderer)
+    assert convert(layer)[0]["paint"]["fill-opacity"] == 1.0
+
+
 def test_a_dashed_outline_is_reported():
     layer = make_layer("Polygon")
     layer.setRenderer(QgsSingleSymbolRenderer(fill("#4daf4a", outline_style="dash")))

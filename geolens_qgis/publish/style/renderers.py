@@ -188,7 +188,9 @@ def _categorized(layer, renderer, losses: LossLog) -> RenderedStyle:
                 by_value[_json_value(item)] = entry
     listed = list(by_value.items())
     fallback = other.style.color if other else FALLBACK_COLOR
-    result = _base(_lead(styles).style)
+    # Classes a later duplicate shadows draw nothing, so they can't set the shared look.
+    winners = {id(entry) for entry in by_value.values()} | {id(other)}
+    result = _base(_lead([e for e in styles if id(e) in winners] or styles).style)
     result_kind = styles[0].style.kind
     pairs = [
         value_color

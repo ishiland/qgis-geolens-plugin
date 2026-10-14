@@ -204,7 +204,7 @@ def _marker(symbol, layer, style: SymbolStyle, losses: LossLog, where: str) -> N
         losses.add("effect_dropped", where, "outline dash pattern")
     stroke = layer.strokeColor()
     style.paint["circle-stroke-color"] = stroke.name()
-    style.paint["circle-stroke-width"] = to_pixels(
+    style.paint["circle-stroke-width"] = _stroke_pixels(
         layer.strokeWidth(), layer.strokeWidthUnit(), losses, where
     )
     stroke_opacity = _opacity(symbol, stroke)
