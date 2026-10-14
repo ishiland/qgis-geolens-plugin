@@ -295,6 +295,16 @@ def test_empty_layers_are_skipped(tmp_path):
     assert [issue.code for issue in plan.issues] == ["A031"]
 
 
+@pytest.mark.parametrize("rows, skipped", [(0, True), (2, False)])
+def test_layers_with_an_unknown_feature_count_are_probed(rows, skipped, monkeypatch):
+    layer = memory_layer("Point", "lazy", rows=rows)
+    monkeypatch.setattr(
+        layer, "featureCount", lambda: Qgis.FeatureCountState.UnknownCount
+    )
+    plan = plan_export([layer], SERVER)
+    assert (plan.to_export == []) is skipped
+
+
 def test_layer_types_geolens_cannot_take_are_reported(tmp_path):
     layers = [
         QgsVectorTileLayer("type=xyz&url=https://example.com/{z}/{x}/{y}.pbf", "vt"),

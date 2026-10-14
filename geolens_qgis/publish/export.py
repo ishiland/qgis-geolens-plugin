@@ -159,7 +159,7 @@ def _classify(layer, selected_only: bool, issues: list[Issue]) -> PlannedLayer |
         )
         return None
     if layer_type == Qgis.LayerType.Vector:
-        if layer.featureCount() == 0:
+        if _has_no_features(layer):
             issues.append(_empty(layer_id, name, "Layer is empty and will be skipped."))
             return None
         if selected_only and layer.selectedFeatureCount() == 0:
@@ -199,6 +199,15 @@ def _classify(layer, selected_only: bool, issues: list[Issue]) -> PlannedLayer |
         )
     )
     return None
+
+
+def _has_no_features(layer) -> bool:
+    count = layer.featureCount()
+    if count == Qgis.FeatureCountState.UnknownCount:
+        # Some providers can't count without reading; look for one feature.
+        request = QgsFeatureRequest().setLimit(1).setNoAttributes()
+        return next(layer.getFeatures(request), None) is None
+    return count == 0
 
 
 def _empty(layer_id: str, name: str, message: str) -> Issue:
