@@ -1,0 +1,218 @@
+"""Layer export against a real QGIS."""
+
+import hashlib
+
+import pytest
+
+pytest.importorskip("pytest_qgis")
+
+from qgis.core import (  # noqa: E402
+    QgsCoordinateTransformContext,
+    QgsFeature,
+    QgsGeometry,
+    QgsPointXY,
+    QgsRasterLayer,
+    QgsVectorLayer,
+    QgsVectorTileLayer,
+)
+
+from geolens_qgis.publish.export import (  # noqa: E402
+    ExportTask,
+    plan_export,
+    safe_file_stem,
+)
+
+SERVER = "https://geolens.example.com"
+
+
+@pytest.fixture(autouse=True)
+def _qgis(real_qgis, qgis_app):
+    return qgis_app
+
+
+def memory_layer(geometry, name, rows=3, fields="field=name:string"):
+    layer = QgsVectorLayer(f"{geometry}?crs=epsg:4326&{fields}", name, "memory")
+    features = []
+    for index in range(rows):
+        feature = QgsFeature(layer.fields())
+        feature.setAttributes([f"row {index}"])
+        if geometry == "Point":
+            feature.setGeometry(QgsGeometry.fromPointXY(QgsPointXY(index, index)))
+        elif geometry == "LineString":
+            feature.setGeometry(
+                QgsGeometry.fromPolylineXY([QgsPointXY(index, 0), QgsPointXY(index, 1)])
+            )
+        elif geometry == "Polygon":
+            feature.setGeometry(
+                QgsGeometry.fromPolygonXY(
+                    [
+                        [
+                            QgsPointXY(index, 0),
+                            QgsPointXY(index + 1, 0),
+                            QgsPointXY(index + 1, 1),
+                            QgsPointXY(index, 0),
+                        ]
+                    ]
+                )
+            )
+        features.append(feature)
+    layer.dataProvider().addFeatures(features)
+    return layer
+
+
+def geotiff(path):
+    from osgeo import gdal, osr
+
+    gdal.UseExceptions()
+    dataset = gdal.GetDriverByName("GTiff").Create(str(path), 8, 8, 1, gdal.GDT_Byte)
+    dataset.SetGeoTransform((0, 1, 0, 8, 0, -1))
+    srs = osr.SpatialReference()
+    srs.ImportFromEPSG(4326)
+    dataset.SetProjection(srs.ExportToWkt())
+    dataset.GetRasterBand(1).Fill(7)
+    dataset.FlushCache()
+    return QgsRasterLayer(str(path), path.stem)
+
+
+def run(layers, tmp_path, server=SERVER, selected_only=(), **kwargs):
+    plan = plan_export(layers, server, selected_only)
+    task = ExportTask(plan, tmp_path / "out", QgsCoordinateTransformContext(), **kwargs)
+    (tmp_path / "out").mkdir(exist_ok=True)
+    assert task.run(), task.error
+    return task
+
+
+def feature_count(path):
+    return QgsVectorLayer(str(path), "check", "ogr").featureCount()
+
+
+@pytest.mark.parametrize("geometry", ["Point", "LineString", "Polygon"])
+def test_vector_layers_become_flatgeobuf_with_their_checksum(geometry, tmp_path):
+    task = run([memory_layer(geometry, geometry.lower())], tmp_path)
+    (exported,) = task.result.exported
+    assert exported.kind == "vector"
+    assert exported.path.suffix == ".fgb"
+    assert feature_count(exported.path) == 3
+    assert exported.size == exported.path.stat().st_size
+    assert exported.sha256 == hashlib.sha256(exported.path.read_bytes()).hexdigest()
+    assert exported.temporary
+
+
+def test_a_table_without_geometry_becomes_a_geopackage(tmp_path):
+    task = run([memory_layer("NoGeometry", "people")], tmp_path)
+    (exported,) = task.result.exported
+    assert exported.kind == "table"
+    assert exported.path.suffix == ".gpkg"
+    assert feature_count(exported.path) == 3
+    assert [issue.code for issue in task.result.issues] == ["A032"]
+
+
+def test_selected_features_only(tmp_path):
+    layer = memory_layer("Point", "points", rows=5)
+    layer.selectByIds([1, 2])
+    task = run([layer], tmp_path, selected_only=[layer.id()])
+    assert feature_count(task.result.exported[0].path) == 2
+
+
+def test_layer_with_no_selection_is_skipped_when_selected_only(tmp_path):
+    layer = memory_layer("Point", "points")
+    plan = plan_export([layer], SERVER, [layer.id()])
+    assert plan.to_export == []
+    assert [issue.code for issue in plan.issues] == ["A031"]
+
+
+def test_subset_string_limits_the_export(tmp_path):
+    layer = memory_layer("Point", "points", rows=5)
+    assert layer.setSubsetString("\"name\" = 'row 3'")
+    task = run([layer], tmp_path)
+    assert feature_count(task.result.exported[0].path) == 1
+
+
+def test_geotiff_is_uploaded_as_it_is(tmp_path):
+    layer = geotiff(tmp_path / "dem.tif")
+    task = run([layer], tmp_path)
+    (exported,) = task.result.exported
+    assert exported.kind == "raster"
+    assert exported.path == tmp_path / "dem.tif"
+    assert not exported.temporary
+    assert exported.sha256 == hashlib.sha256(exported.path.read_bytes()).hexdigest()
+
+
+def test_other_rasters_are_written_as_geotiff(tmp_path):
+    from osgeo import gdal
+
+    source = tmp_path / "grid.tif"
+    geotiff(source)
+    gdal.Translate(str(tmp_path / "grid.asc"), str(source), format="AAIGrid")
+    task = run([QgsRasterLayer(str(tmp_path / "grid.asc"), "grid")], tmp_path)
+    (exported,) = task.result.exported
+    assert exported.path.suffix == ".tif"
+    assert exported.temporary
+    assert QgsRasterLayer(str(exported.path)).isValid()
+
+
+def test_layers_are_locked_for_the_task(tmp_path):
+    layer = memory_layer("Point", "points")
+    plan = plan_export([layer], SERVER)
+    task = ExportTask(plan, tmp_path, QgsCoordinateTransformContext())
+    assert [locked.id() for locked in task.dependentLayers()] == [layer.id()]
+
+
+def test_a_file_over_the_server_limit_raises_a010(tmp_path):
+    task = run([memory_layer("Point", "points")], tmp_path, max_file_size_bytes=10)
+    assert [(i.code, i.severity) for i in task.result.issues] == [("A010", "error")]
+
+
+def test_empty_layers_are_skipped(tmp_path):
+    layer = memory_layer("Point", "empty", rows=0)
+    plan = plan_export([layer], SERVER)
+    assert plan.to_export == []
+    assert [issue.code for issue in plan.issues] == ["A031"]
+
+
+def test_layer_types_geolens_cannot_take_are_reported(tmp_path):
+    layers = [
+        QgsVectorTileLayer("type=xyz&url=https://example.com/{z}/{x}/{y}.pbf", "vt"),
+        QgsRasterLayer(
+            "type=xyz&url=https://example.com/{z}/{x}/{y}.png", "xyz", "wms"
+        ),
+    ]
+    plan = plan_export(layers, SERVER)
+    assert plan.to_export == []
+    assert [(i.code, i.layer_name) for i in plan.issues] == [
+        ("A030", "vt"),
+        ("A030", "xyz"),
+    ]
+
+
+def tagged(layer, server, dataset_id="abc"):
+    layer.setCustomProperty("geolens/server", server)
+    layer.setCustomProperty("geolens/dataset_id", dataset_id)
+    return layer
+
+
+def test_a_layer_from_the_target_server_becomes_a_reference(tmp_path):
+    layer = tagged(memory_layer("Point", "points"), SERVER + "/")
+    task = run([layer], tmp_path)
+    assert task.result.exported == []
+    (reference,) = task.result.references
+    assert (reference.layer_id, reference.dataset_id) == (layer.id(), "abc")
+    assert [issue.code for issue in task.result.issues] == ["A034"]
+
+
+def test_a_layer_from_another_geolens_is_exported(tmp_path):
+    layer = tagged(memory_layer("Point", "points"), "https://other.example.org")
+    task = run([layer], tmp_path)
+    assert task.result.references == []
+    assert len(task.result.exported) == 1
+
+
+def test_file_names_drop_control_characters_and_stay_unique(tmp_path):
+    assert safe_file_stem("a\x00b/c\nd") == "abcd"
+    assert safe_file_stem("..") == "layer"
+    layers = [memory_layer("Point", "same"), memory_layer("Point", "same")]
+    task = run(layers, tmp_path)
+    assert sorted(item.path.name for item in task.result.exported) == [
+        "same.fgb",
+        "same_2.fgb",
+    ]
