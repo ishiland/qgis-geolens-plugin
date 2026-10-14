@@ -7,6 +7,7 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from qgis.core import QgsExpression, QgsFeatureRequest, QgsRenderContext
+from qgis.PyQt.QtCore import Qt
 
 from .loss import LossLog
 from .ramps import HEATMAP_SAMPLES, heatmap_color_expression, nearest_ramp
@@ -32,6 +33,15 @@ class RenderedStyle:
     layout: dict[str, Any] = field(default_factory=dict)
     style_config: dict[str, Any] | None = None
     filter: list | None = None
+
+
+def _json_value(value):
+    """Return a category value as a JSON scalar; dates become ISO text."""
+    if isinstance(value, (str, int, float)):
+        return value
+    if hasattr(value, "toString"):
+        return value.toString(Qt.DateFormat.ISODate)
+    return str(value)
 
 
 def _is_null(value) -> bool:
@@ -126,6 +136,7 @@ def _categorized(layer, renderer, losses: LossLog) -> RenderedStyle:
             other = other or entry
         else:
             for item in value if isinstance(value, list) else [value]:
+                item = _json_value(item)
                 if item not in seen:
                     seen.add(item)
                     listed.append((item, entry))
@@ -183,10 +194,10 @@ def _first_class(classes, renderer, losses: LossLog) -> RenderedStyle:
 
 
 def _category_filter(column, listed, other, null) -> list | None:
-    """Hide the classes the QGIS user switched off."""
+    """Show only what QGIS draws: the enabled classes, and the rest only under an enabled catch-all."""
     value = ["get", column]
     disabled = [v for v, entry in listed if not entry.enabled]
-    if other is not None and not other.enabled:
+    if other is None or not other.enabled:
         shown: list = [["in", value, ["literal", [v for v, e in listed if e.enabled]]]]
         if null is not None and null.enabled:
             shown.append(["==", value, None])

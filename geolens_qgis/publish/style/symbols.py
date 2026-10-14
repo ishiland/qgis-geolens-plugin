@@ -118,6 +118,8 @@ def _line(symbol, layer, style: SymbolStyle, losses: LossLog, where: str) -> Non
     color = layer.color() if layer.layerType() == "SimpleLine" else symbol.color()
     style.color = color.name()
     style.paint["line-opacity"] = _opacity(symbol, color)
+    if layer.layerType() == "SimpleLine" and layer.penStyle() == Qt.PenStyle.NoPen:
+        style.paint["line-opacity"] = 0
     if layer.layerType() != "SimpleLine":
         losses.add("symbol_layer_dropped", where, layer.layerType())
         return

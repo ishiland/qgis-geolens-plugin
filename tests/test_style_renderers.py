@@ -37,7 +37,7 @@ from qgis.core import (  # noqa: E402
     QgsSingleSymbolRenderer,
     QgsVectorLayer,
 )
-from qgis.PyQt.QtCore import QVariant  # noqa: E402
+from qgis.PyQt.QtCore import QDate, QVariant  # noqa: E402
 from qgis.PyQt.QtGui import QColor, QPainter  # noqa: E402
 
 from geolens_qgis.publish.style.layer import convert_layer  # noqa: E402
@@ -244,6 +244,24 @@ def test_single_line_converts_width_offset_dash_cap_and_join():
     assert losses == []
 
 
+def test_a_line_with_no_pen_is_invisible():
+    layer = make_layer("LineString")
+    symbol = QgsLineSymbol.createSimple({"line_style": "no"})
+    layer.setRenderer(QgsSingleSymbolRenderer(symbol))
+    assert convert(layer)[0]["paint"]["line-opacity"] == 0
+
+
+def test_date_class_values_become_iso_text():
+    layer = make_layer("Polygon", fields=(("day", "s"),))
+    renderer = QgsCategorizedSymbolRenderer(
+        "day", [QgsRendererCategory(QDate(2026, 10, 13), fill("#4daf4a"), "Today")]
+    )
+    layer.setRenderer(renderer)
+    entry, _ = convert(layer)
+    assert entry["style_config"]["categories"][0]["value"] == "2026-10-13"
+    json.dumps(entry)
+
+
 def test_a_custom_dash_is_measured_in_line_widths():
     layer = make_layer("LineString")
     symbol = QgsLineSymbol.createSimple(
@@ -355,6 +373,7 @@ def test_without_an_all_other_class_the_fallback_is_grey():
         GREY,
         ["match", ["get", "type"], "city", "#4daf4a", GREY],
     ]
+    assert entry["filter"] == ["any", ["in", ["get", "type"], ["literal", ["city"]]]]
     assert losses == []
 
 
@@ -828,6 +847,21 @@ def test_field_names_over_the_manifest_limit_are_left_out_of_the_popup():
             "expression_not_representable",
             "popup_config",
             "field names longer than 128 characters left out",
+        )
+    ]
+
+
+def test_more_visible_fields_than_the_manifest_allows_are_reported():
+    names = [f"f{i}" for i in range(102)]
+    layer = make_layer(fields=tuple((name, "s") for name in names))
+    layer.setEditorWidgetSetup(0, QgsEditorWidgetSetup("Hidden", {}))
+    entry, losses = convert(layer)
+    assert entry["popup_config"] == popup(names[1:101])
+    assert losses == [
+        loss(
+            "expression_not_representable",
+            "popup_config",
+            "1 fields beyond 100 left out",
         )
     ]
 

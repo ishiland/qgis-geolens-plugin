@@ -57,6 +57,12 @@ def popup_config(layer, losses: LossLog) -> dict[str, Any]:
             f"field names longer than {MAX_FIELD_NAME} characters left out",
         )
         visible = [name for name in visible if len(name) <= MAX_FIELD_NAME]
+    if len(visible) > MAX_POPUP_FIELDS:
+        losses.add(
+            "expression_not_representable",
+            "popup_config",
+            f"{len(visible) - MAX_POPUP_FIELDS} fields beyond {MAX_POPUP_FIELDS} left out",
+        )
     return {"enabled": bool(visible), "visible_fields": visible[:MAX_POPUP_FIELDS]}
 
 
