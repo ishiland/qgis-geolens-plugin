@@ -287,6 +287,35 @@ def test_a_rewritten_paletted_raster_keeps_its_colour_table(tmp_path):
     assert band.GetColorTable().GetColorEntry(7) == (10, 20, 30, 255)
 
 
+def test_a_scaled_raster_that_needs_rewriting_is_skipped(tmp_path):
+    from osgeo import gdal
+
+    source = tmp_path / "packed.tif"
+    dataset = gdal.GetDriverByName("GTiff").Create(
+        str(source), 8, 8, 1, gdal.GDT_UInt16
+    )
+    dataset.SetGeoTransform((0, 1, 0, 8, 0, -1))
+    dataset.GetRasterBand(1).SetScale(0.0001)
+    dataset.GetRasterBand(1).Fill(5000)
+    dataset = None
+    layer = QgsRasterLayer(str(source), "packed")
+    layer.setCrs(QgsCoordinateReferenceSystem("EPSG:3857"))
+    plan = plan_export([layer], SERVER)
+    assert plan.to_export == []
+    assert [(i.code, i.severity) for i in plan.issues] == [("A033", "warning")]
+
+
+def test_a_scaled_geotiff_uploadable_as_it_is_still_exports(tmp_path):
+    from osgeo import gdal
+
+    layer = geotiff(tmp_path / "dem.tif")
+    dataset = gdal.Open(str(tmp_path / "dem.tif"), gdal.GA_Update)
+    dataset.GetRasterBand(1).SetScale(0.5)
+    dataset = None
+    (exported,) = run([layer], tmp_path).result.exported
+    assert not exported.temporary
+
+
 def test_the_raster_pipe_belongs_to_the_writing_thread_only_while_writing(
     tmp_path, monkeypatch
 ):

@@ -194,6 +194,19 @@ def _classify(layer, selected_only: bool, issues: list[Issue]) -> PlannedLayer |
         layer_type == Qgis.LayerType.Raster
         and layer.providerType() not in _SERVICE_RASTER_PROVIDERS
     ):
+        if _stores_scaled_values(layer) and _geotiff_path(layer) is None:
+            issues.append(
+                Issue(
+                    "A033",
+                    "warning",
+                    layer_id,
+                    name,
+                    "This raster stores scaled values and can't be re-encoded "
+                    "without changing them, so it will be skipped. Publish the "
+                    "original file instead.",
+                )
+            )
+            return None
         return PlannedLayer(layer, RASTER)
     issues.append(
         Issue(
@@ -205,6 +218,14 @@ def _classify(layer, selected_only: bool, issues: list[Issue]) -> PlannedLayer |
         )
     )
     return None
+
+
+def _stores_scaled_values(layer) -> bool:
+    provider = layer.dataProvider()
+    return any(
+        provider.bandScale(band) != 1 or provider.bandOffset(band) != 0
+        for band in range(1, provider.bandCount() + 1)
+    )
 
 
 def _has_no_features(layer) -> bool:
