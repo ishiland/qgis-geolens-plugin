@@ -32,7 +32,7 @@ TABLE = "table"
 RASTER = "raster"
 
 # Raster providers that stream tiles from a service instead of reading data.
-_SERVICE_RASTER_PROVIDERS = {"wms", "wmts", "arcgismapserver", "wcs"}
+_SERVICE_RASTER_PROVIDERS = {"wms", "wmts", "arcgismapserver"}
 _GEOTIFF_SUFFIXES = {".tif", ".tiff"}
 # Leaves room for the extension and a uniqueness counter in a 255 byte name.
 _MAX_STEM_BYTES = 200
