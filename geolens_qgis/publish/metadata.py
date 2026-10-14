@@ -24,13 +24,17 @@ def _tags(keywords: dict[str, list[str]]) -> list[str]:
     return list(seen)
 
 
+def _texts(values) -> list[str]:
+    return [text for text in (_clean(value) for value in values) if text]
+
+
 def _has_content(metadata) -> bool:
     return bool(
         _clean(metadata.title())
         or _clean(metadata.abstract())
-        or metadata.keywords()
-        or metadata.licenses()
-        or metadata.rights()
+        or _tags(metadata.keywords())
+        or _texts(metadata.licenses())
+        or _texts(metadata.rights())
     )
 
 
@@ -73,13 +77,12 @@ def dataset_metadata(layer, project_metadata) -> dict[str, Any]:
     if tags:
         extra["tags"] = tags
     # Project metadata has no licences or rights.
-    licenses = source.licenses() if hasattr(source, "licenses") else []
+    licenses = _texts(source.licenses()) if hasattr(source, "licenses") else []
     if licenses:
-        extra["license"] = _clean(licenses[0])
-    rights = source.rights() if hasattr(source, "rights") else []
-    attribution = "; ".join(filter(None, (_clean(item) for item in rights)))
-    if attribution:
-        extra["attribution"] = attribution
+        extra["license"] = licenses[0]
+    rights = _texts(source.rights()) if hasattr(source, "rights") else []
+    if rights:
+        extra["attribution"] = "; ".join(rights)
     if extra:
         entry["metadata"] = extra
     attributes = _attributes(layer)

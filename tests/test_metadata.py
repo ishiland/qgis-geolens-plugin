@@ -112,3 +112,27 @@ def test_a_raster_has_no_attributes():
     raster = QgsRasterLayer()
     entry = dataset_metadata(raster, QgsProjectMetadata())
     assert "attributes" not in entry
+
+
+def test_blank_entries_count_as_no_metadata():
+    project = QgsProjectMetadata()
+    project.setAbstract("project text")
+    layer = layer_with([])
+    metadata = QgsLayerMetadata()
+    metadata.setLicenses([" "])
+    metadata.setRights([""])
+    metadata.setKeywords({"free": [""]})
+    layer.setMetadata(metadata)
+    assert dataset_metadata(layer, project) == {
+        "title": "parks",
+        "description": "project text",
+    }
+
+
+def test_the_first_nonblank_license_is_used():
+    layer = layer_with([])
+    metadata = QgsLayerMetadata()
+    metadata.setLicenses(["", "ODbL"])
+    layer.setMetadata(metadata)
+    entry = dataset_metadata(layer, QgsProjectMetadata())
+    assert entry["metadata"] == {"license": "ODbL"}
