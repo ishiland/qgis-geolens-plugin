@@ -62,6 +62,11 @@ class SymbolStyle:
         }
 
 
+def _stroke_pixels(value: float, unit, losses: LossLog, where: str) -> float:
+    """A zero width is a hairline one pixel wide in QGIS; MapLibre would draw nothing."""
+    return to_pixels(value, unit, losses, where) if value else 1.0
+
+
 def _opacity(symbol, color) -> float:
     return round(symbol.opacity() * color.alphaF(), 3)
 
@@ -123,7 +128,7 @@ def _fill(symbol, layer, style: SymbolStyle, losses: LossLog, where: str) -> Non
             style.color = None
         return
     style.builder["outlineColor"] = outline_color.name()
-    style.builder["outlineWidth"] = to_pixels(
+    style.builder["outlineWidth"] = _stroke_pixels(
         outline_width, outline_unit, losses, where
     )
     if outline_style != Qt.PenStyle.SolidLine or _opacity(symbol, outline_color) < 1:
@@ -143,7 +148,7 @@ def _line(symbol, layer, style: SymbolStyle, losses: LossLog, where: str) -> Non
         losses.add("symbol_layer_dropped", where, layer.layerType())
         return
     unit = layer.widthUnit()
-    width = to_pixels(layer.width(), unit, losses, where)
+    width = _stroke_pixels(layer.width(), unit, losses, where)
     style.paint["line-width"] = width
     if layer.offset():
         style.paint["line-offset"] = to_pixels(

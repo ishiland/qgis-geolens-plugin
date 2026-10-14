@@ -308,6 +308,18 @@ def test_a_polygon_offset_becomes_a_translation_in_pixels():
     assert convert(layer)[0]["paint"]["fill-translate"] == [7.56, 3.78]
 
 
+def test_zero_width_lines_and_outlines_are_one_pixel_hairlines():
+    layer = make_layer("LineString")
+    line = QgsLineSymbol.createSimple({"line_width": "0", "line_style": "dash"})
+    layer.setRenderer(QgsSingleSymbolRenderer(line))
+    paint = convert(layer)[0]["paint"]
+    assert paint["line-width"] == 1.0
+    polygon = make_layer("Polygon")
+    polygon.setRenderer(QgsSingleSymbolRenderer(fill("#4daf4a", outline_width="0")))
+    entry, _ = convert(polygon)
+    assert entry["style_config"]["builder"]["outlineWidth"] == 1.0
+
+
 def test_a_dashed_outline_is_reported():
     layer = make_layer("Polygon")
     layer.setRenderer(QgsSingleSymbolRenderer(fill("#4daf4a", outline_style="dash")))
