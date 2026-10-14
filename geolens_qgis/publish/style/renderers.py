@@ -22,6 +22,7 @@ from .symbols import (
 from .units import to_pixels
 
 FALLBACK_COLOR = "#cccccc"
+DEFAULT_HEATMAP_RAMP = "YlOrRd"
 # A ramp this far (mean channel value, 0-255) from every named ramp is a custom one.
 RAMP_MATCH_TOLERANCE = 6
 # QMetaType ids of the integer field types.
@@ -100,10 +101,18 @@ class _Class:
     enabled: bool
     drawable: bool = True
 
+    @property
+    def shown(self) -> bool:
+        return self.enabled and self.drawable
+
 
 def _lead(styles: list["_Class"]) -> "_Class":
     """The class whose symbol the layer's shared look comes from."""
-    return next((entry for entry in styles if entry.drawable), styles[0])
+    for wanted in (lambda e: e.shown, lambda e: e.drawable):
+        found = next((entry for entry in styles if wanted(entry)), None)
+        if found:
+            return found
+    return styles[0]
 
 
 def _class_styles(
@@ -128,6 +137,8 @@ def _class_styles(
         if not drawable:
             # A symbol with nothing to draw is a class that shows nothing.
             style.color, enabled = FALLBACK_COLOR, False
+        elif not enabled:
+            pass
         elif lead is None:
             lead = style
         elif style.fixed(not size_varies) != lead.fixed(not size_varies):
@@ -301,7 +312,7 @@ def _graduated(layer, renderer, losses: LossLog) -> RenderedStyle:
     kind = styles[0].style.kind
     lead = _lead(styles)
     # Switched-off and empty classes draw nothing, so they don't decide the target.
-    shown = [entry for entry in styles if entry.enabled and entry.drawable] or [lead]
+    shown = [entry for entry in styles if entry.shown] or [lead]
     colors = [entry.style.color for entry in styles]
     shown_sizes = [entry.style.size for entry in shown]
     sized = all(size is not None for size in shown_sizes)
@@ -359,10 +370,12 @@ def _range_filter(column, ranges, styles) -> list:
 
 def _heatmap(layer, renderer, losses: LossLog) -> RenderedStyle:
     ramp = renderer.colorRamp()
-    colors = [ramp.color(i / (HEATMAP_SAMPLES - 1)) for i in range(HEATMAP_SAMPLES)]
-    name, reverse, error = nearest_ramp([color.name() for color in colors])
-    # Density 0 is transparent in GeoLens whatever the first colour is.
-    translucent = any(color.alpha() < 255 for color in colors[1:])
+    if ramp is None:
+        name, reverse, error, translucent = DEFAULT_HEATMAP_RAMP, False, 0, True
+    else:
+        colors = [ramp.color(i / (HEATMAP_SAMPLES - 1)) for i in range(HEATMAP_SAMPLES)]
+        name, reverse, error = nearest_ramp([color.name() for color in colors])
+        translucent = any(color.alpha() < 255 for color in colors)
     if error > RAMP_MATCH_TOLERANCE or translucent:
         losses.add(
             "raster_renderer_approximated", "renderer.colorRamp", f"drawn with {name}"

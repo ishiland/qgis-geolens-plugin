@@ -881,6 +881,21 @@ def test_graduated_size_and_colour_together_keep_the_colour():
     assert losses == [loss("unsupported_renderer", "renderer", "graduated size+color")]
 
 
+def test_a_switched_off_class_does_not_supply_the_shared_look():
+    layer = make_layer("Polygon")
+    renderer = QgsCategorizedSymbolRenderer(
+        "type",
+        [
+            QgsRendererCategory("a", fill("#ff0000", outline_width="3"), "A", False),
+            QgsRendererCategory("b", fill("#00ff00"), "B"),
+        ],
+    )
+    layer.setRenderer(renderer)
+    entry, losses = convert(layer)
+    assert entry["style_config"]["builder"]["outlineWidth"] == 0.98
+    assert losses == []
+
+
 def test_a_single_range_is_a_constant_not_an_empty_step():
     layer = pop_layer()
     layer.setRenderer(graduated("pop", [colored("#fee5d9")], [0, 1000]))
@@ -993,6 +1008,31 @@ def test_a_data_defined_heatmap_radius_is_reported():
     layer.setRenderer(renderer)
     assert [item["kind"] for item in convert(layer)[1]] == [
         "expression_not_representable"
+    ]
+
+
+def test_a_heatmap_without_a_ramp_uses_the_default_one():
+    layer = pop_layer()
+    renderer = heatmap(ramp_colors("Blues"))
+    renderer.setColorRamp(None)
+    layer.setRenderer(renderer)
+    entry, losses = convert(layer)
+    assert entry["style_config"]["builder"]["heatmapRamp"] == "YlOrRd"
+    assert [item["kind"] for item in losses] == ["raster_renderer_approximated"]
+
+
+def test_a_ramp_that_starts_translucent_is_reported():
+    layer = pop_layer()
+    colors = ramp_colors("Blues")
+    first = QColor(colors[0])
+    first.setAlpha(0)
+    ramp = gradient(colors)
+    ramp.setColor1(first)
+    renderer = heatmap(colors)
+    renderer.setColorRamp(ramp)
+    layer.setRenderer(renderer)
+    assert [item["kind"] for item in convert(layer)[1]] == [
+        "raster_renderer_approximated"
     ]
 
 
