@@ -7,11 +7,13 @@ import pytest
 pytest.importorskip("pytest_qgis")
 
 from qgis.core import (  # noqa: E402
+    QgsApplication,
     QgsCoordinateTransformContext,
     QgsFeature,
     QgsGeometry,
     QgsPointXY,
     QgsRasterLayer,
+    QgsTask,
     QgsVectorLayer,
     QgsVectorTileLayer,
 )
@@ -75,10 +77,13 @@ def geotiff(path):
 
 
 def run(layers, tmp_path, server=SERVER, selected_only=(), **kwargs):
+    """Run the task on QGIS's own worker threads, as the plugin does."""
     plan = plan_export(layers, server, selected_only)
-    task = ExportTask(plan, tmp_path / "out", QgsCoordinateTransformContext(), **kwargs)
     (tmp_path / "out").mkdir(exist_ok=True)
-    assert task.run(), task.error
+    task = ExportTask(plan, tmp_path / "out", QgsCoordinateTransformContext(), **kwargs)
+    QgsApplication.taskManager().addTask(task)
+    assert task.waitForFinished(30_000)
+    assert task.status() == QgsTask.TaskStatus.Complete, task.error
     return task
 
 
@@ -112,6 +117,20 @@ def test_selected_features_only(tmp_path):
     layer.selectByIds([1, 2])
     task = run([layer], tmp_path, selected_only=[layer.id()])
     assert feature_count(task.result.exported[0].path) == 2
+
+
+def test_the_export_is_a_snapshot_of_the_layer_when_the_task_was_made(tmp_path):
+    layer = memory_layer("Point", "points", rows=5)
+    layer.selectByIds([1, 2])
+    plan = plan_export([layer], SERVER, [layer.id()])
+    (tmp_path / "out").mkdir()
+    task = ExportTask(plan, tmp_path / "out", QgsCoordinateTransformContext())
+    layer.selectByIds([1, 2, 3, 4])
+    layer.setName("renamed")
+    assert task.run(), task.error
+    (exported,) = task.result.exported
+    assert exported.layer_name == "points"
+    assert feature_count(exported.path) == 2
 
 
 def test_layer_with_no_selection_is_skipped_when_selected_only(tmp_path):

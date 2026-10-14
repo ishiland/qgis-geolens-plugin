@@ -17,12 +17,13 @@ from urllib.parse import urlparse
 
 from qgis.core import (
     Qgis,
+    QgsFeatureRequest,
     QgsRasterBlockFeedback,
     QgsRasterFileWriter,
-    QgsRasterLayer,
     QgsRasterPipe,
     QgsTask,
     QgsVectorFileWriter,
+    QgsVectorLayerFeatureSource,
 )
 
 VECTOR = "vector"
@@ -211,20 +212,68 @@ def sha256_of(path: Path) -> str:
     return digest.hexdigest()
 
 
-def _write_vector(planned: PlannedLayer, path: Path, transform_context, feedback):
+@dataclass
+class _Job:
+    """Everything the worker thread needs, copied on the GUI thread.
+
+    QGIS layers belong to the GUI thread, so `ExportTask.run` works from
+    feature sources, cloned raster providers and plain values instead.
+    """
+
+    layer_id: str
+    name: str
+    kind: str
+    existing_geotiff: Path | None = None
+    source: object = None
+    fields: object = None
+    wkb_type: object = None
+    crs: object = None
+    fids: list[int] | None = None
+    pipe: object = None
+    columns: int = 0
+    rows: int = 0
+    extent: object = None
+
+
+def _snapshot(planned: PlannedLayer) -> _Job:
     layer = planned.layer
+    job = _Job(layer.id(), layer.name(), planned.kind)
+    if planned.kind == RASTER:
+        job.existing_geotiff = _geotiff_path(layer)
+        if job.existing_geotiff is None:
+            job.pipe = QgsRasterPipe()
+            job.pipe.set(layer.dataProvider().clone())
+            job.columns, job.rows = layer.width(), layer.height()
+            job.extent, job.crs = layer.extent(), layer.crs()
+        return job
+    job.source = QgsVectorLayerFeatureSource(layer)
+    job.fields, job.wkb_type, job.crs = layer.fields(), layer.wkbType(), layer.crs()
+    if planned.selected_only:
+        job.fids = list(layer.selectedFeatureIds())
+    return job
+
+
+def _write_vector(job: _Job, path: Path, transform_context, is_canceled) -> None:
     options = QgsVectorFileWriter.SaveVectorOptions()
-    options.driverName = "GPKG" if planned.kind == TABLE else "FlatGeobuf"
+    options.driverName = "GPKG" if job.kind == TABLE else "FlatGeobuf"
     options.fileEncoding = "UTF-8"
-    options.onlySelectedFeatures = planned.selected_only
-    options.feedback = feedback
     # A GeoPackage names its table; FlatGeobuf takes the file name.
     options.layerName = path.stem
-    error, message, *_ = QgsVectorFileWriter.writeAsVectorFormatV3(
-        layer, str(path), transform_context, options
+    writer = QgsVectorFileWriter.create(
+        str(path), job.fields, job.wkb_type, job.crs, transform_context, options
     )
-    if error != QgsVectorFileWriter.WriterError.NoError:
-        raise ExportError(f"Could not export {layer.name()}: {message}")
+    if writer.hasError() != QgsVectorFileWriter.WriterError.NoError:
+        raise ExportError(f"Could not export {job.name}: {writer.errorMessage()}")
+    request = QgsFeatureRequest()
+    if job.fids is not None:
+        request.setFilterFids(job.fids)
+    for feature in job.source.getFeatures(request):
+        if is_canceled():
+            break
+        if not writer.addFeature(feature):
+            raise ExportError(f"Could not export {job.name}: {writer.errorMessage()}")
+    # Deleting the writer flushes and closes the file.
+    del writer
 
 
 def _geotiff_path(layer) -> Path | None:
@@ -236,30 +285,30 @@ def _geotiff_path(layer) -> Path | None:
     return None
 
 
-def _write_raster(layer: QgsRasterLayer, path: Path, transform_context, feedback):
-    pipe = QgsRasterPipe()
-    pipe.set(layer.dataProvider().clone())
+def _write_raster(job: _Job, path: Path, transform_context, feedback) -> None:
     writer = QgsRasterFileWriter(str(path))
     writer.setOutputFormat("GTiff")
-    error = writer.writeRaster(
-        pipe,
-        layer.width(),
-        layer.height(),
-        layer.extent(),
-        layer.crs(),
+    result = writer.writeRaster(
+        job.pipe,
+        job.columns,
+        job.rows,
+        job.extent,
+        job.crs,
         transform_context,
         feedback,
     )
-    if error != Qgis.RasterFileWriterResult.Success:
-        raise ExportError(f"Could not export {layer.name()}")
+    if result != Qgis.RasterFileWriterResult.Success:
+        raise ExportError(f"Could not export {job.name}")
 
 
 class ExportTask(QgsTask):
     """Writes the planned layers to `folder`.
 
-    The layers stay locked for the task's lifetime, so a QGIS user can't
-    remove or edit one mid-export. Read `result` once the task finishes; if
-    `run` returned False, `error` says why.
+    The constructor copies what the worker needs from the layers, so call it
+    on the GUI thread; later edits to a layer don't change the export. The
+    layers stay locked for the task's lifetime, so a QGIS user can't remove
+    one mid-export. Read `result` once the task finishes; if `run` returned
+    False, `error` says why.
     """
 
     def __init__(
@@ -271,7 +320,6 @@ class ExportTask(QgsTask):
         description: str = "Export layers for GeoLens",
     ):
         super().__init__(description, QgsTask.Flag.CanCancel)
-        self.plan = plan
         self.folder = Path(folder or tempfile.mkdtemp(prefix="geolens_publish_"))
         self.transform_context = transform_context
         self.max_file_size_bytes = max_file_size_bytes
@@ -280,6 +328,7 @@ class ExportTask(QgsTask):
             references=list(plan.references), issues=list(plan.issues)
         )
         self.error = ""
+        self._jobs = [_snapshot(planned) for planned in plan.to_export]
         self.setDependentLayers([planned.layer for planned in plan.to_export])
 
     def cancel(self):
@@ -287,50 +336,45 @@ class ExportTask(QgsTask):
         super().cancel()
 
     def run(self) -> bool:
-        total = max(1, len(self.plan.to_export))
+        total = max(1, len(self._jobs))
         try:
-            for index, planned in enumerate(self.plan.to_export):
+            for index, job in enumerate(self._jobs):
                 if self.isCanceled():
                     return False
-                self.result.exported.append(self._export(planned))
+                self.result.exported.append(self._export(job))
                 self.setProgress(100 * (index + 1) / total)
         except (ExportError, OSError) as error:
             self.error = str(error)
             return False
         return True
 
-    def _export(self, planned: PlannedLayer) -> ExportedLayer:
-        layer = planned.layer
-        temporary = True
-        path = None
-        if planned.kind == RASTER:
-            path = _geotiff_path(layer)
-            temporary = path is None
+    def _export(self, job: _Job) -> ExportedLayer:
+        path = job.existing_geotiff
         if path is None:
-            suffix = {VECTOR: ".fgb", TABLE: ".gpkg", RASTER: ".tif"}[planned.kind]
-            path = _unique_path(self.folder, safe_file_stem(layer.name()), suffix)
-            if planned.kind == RASTER:
-                _write_raster(layer, path, self.transform_context, self.feedback)
+            suffix = {VECTOR: ".fgb", TABLE: ".gpkg", RASTER: ".tif"}[job.kind]
+            path = _unique_path(self.folder, safe_file_stem(job.name), suffix)
+            if job.kind == RASTER:
+                _write_raster(job, path, self.transform_context, self.feedback)
             else:
-                _write_vector(planned, path, self.transform_context, self.feedback)
+                _write_vector(job, path, self.transform_context, self.isCanceled)
         size = path.stat().st_size
         if self.max_file_size_bytes is not None and size > self.max_file_size_bytes:
             self.result.issues.append(
                 Issue(
                     "A010",
                     "error",
-                    layer.id(),
-                    layer.name(),
+                    job.layer_id,
+                    job.name,
                     f"The exported file is {size:,} bytes, over the server's "
                     f"limit of {self.max_file_size_bytes:,}.",
                 )
             )
         return ExportedLayer(
-            layer.id(),
-            layer.name(),
-            planned.kind,
+            job.layer_id,
+            job.name,
+            job.kind,
             path,
             size,
             sha256_of(path),
-            temporary,
+            job.existing_geotiff is None,
         )
