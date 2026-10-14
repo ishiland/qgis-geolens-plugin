@@ -15,6 +15,7 @@ from pathlib import Path
 from typing import Iterable
 from urllib.parse import urlparse
 
+from qgis.PyQt.QtCore import QThread
 from qgis.core import (
     Qgis,
     QgsFeatureRequest,
@@ -33,10 +34,6 @@ RASTER = "raster"
 # Raster providers that stream tiles from a service instead of reading data.
 _SERVICE_RASTER_PROVIDERS = {"wms", "wmts", "arcgismapserver", "wcs"}
 _GEOTIFF_SUFFIXES = {".tif", ".tiff"}
-# Files GDAL reads next to a TIFF that can change what it means; uploading the
-# TIFF alone would drop them.
-_SIDECAR_SUFFIXES = (".tfw", ".tifw", ".wld", ".prj")
-_SIDECAR_APPENDED = (".aux.xml", ".msk", ".ovr")
 # Leaves room for the extension and a uniqueness counter in a 255 byte name.
 _MAX_STEM_BYTES = 200
 _UNSAFE_FILE_CHARS = re.compile(r'[\x00-\x1f\x7f/\\:*?"<>|]')
@@ -256,6 +253,7 @@ def _snapshot(planned: PlannedLayer) -> _Job:
         if job.existing_geotiff is None:
             job.pipe = QgsRasterPipe()
             job.pipe.set(layer.dataProvider().clone())
+            job.pipe.moveToThread(None)
             job.columns, job.rows = layer.width(), layer.height()
             job.extent, job.crs = layer.extent(), layer.crs()
         return job
@@ -294,14 +292,24 @@ def _write_vector(job: _Job, path: Path, transform_context, is_canceled) -> None
 
 
 def _geotiff_path(layer) -> Path | None:
+    """The layer's own GeoTIFF, when that file alone describes the raster.
+
+    GDAL lists every file a dataset depends on, so a TIFF that also needs a
+    world file, PAM or other sidecar is rewritten instead of uploaded bare.
+    """
+    from osgeo import gdal
+
     if layer.providerType() != "gdal":
         return None
     path = Path(layer.source().split("|", 1)[0])
     if path.suffix.lower() not in _GEOTIFF_SUFFIXES or not path.is_file():
         return None
-    sidecars = [path.with_suffix(suffix) for suffix in _SIDECAR_SUFFIXES]
-    sidecars += [path.with_name(path.name + suffix) for suffix in _SIDECAR_APPENDED]
-    return None if any(sidecar.exists() for sidecar in sidecars) else path
+    dataset = gdal.Open(str(path))
+    if dataset is None:
+        return None
+    files = dataset.GetFileList()
+    dataset = None
+    return path if len(files) == 1 else None
 
 
 def _write_raster(job: _Job, path: Path, transform_context, feedback) -> None:

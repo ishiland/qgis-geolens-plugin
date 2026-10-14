@@ -198,14 +198,30 @@ def test_geotiff_is_uploaded_as_it_is(tmp_path):
     assert exported.sha256 == hashlib.sha256(exported.path.read_bytes()).hexdigest()
 
 
-@pytest.mark.parametrize("sidecar", ["dem.tfw", "dem.tif.aux.xml", "dem.prj"])
-def test_a_geotiff_with_sidecar_files_is_rewritten(sidecar, tmp_path):
+def test_a_geotiff_with_a_pam_sidecar_is_rewritten(tmp_path):
+    from osgeo import gdal
+
     layer = geotiff(tmp_path / "dem.tif")
-    (tmp_path / sidecar).write_text("<x/>")
-    task = run([layer], tmp_path)
-    (exported,) = task.result.exported
+    dataset = gdal.Open(str(tmp_path / "dem.tif"))
+    dataset.GetRasterBand(1).ComputeStatistics(False)
+    dataset = None
+    assert (tmp_path / "dem.tif.aux.xml").exists()
+    (exported,) = run([layer], tmp_path).result.exported
     assert exported.temporary
     assert exported.path.parent == tmp_path / "out"
+
+
+def test_a_geotiff_georeferenced_by_a_world_file_is_rewritten(tmp_path):
+    from osgeo import gdal
+
+    plain = gdal.GetDriverByName("GTiff").Create(
+        str(tmp_path / "scan.tif"), 8, 8, 1, gdal.GDT_Byte
+    )
+    plain = None
+    (tmp_path / "scan.tfw").write_text("1\n0\n0\n-1\n0\n8\n")
+    layer = QgsRasterLayer(str(tmp_path / "scan.tif"), "scan")
+    (exported,) = run([layer], tmp_path).result.exported
+    assert exported.temporary
 
 
 def test_other_rasters_are_written_as_geotiff(tmp_path):
