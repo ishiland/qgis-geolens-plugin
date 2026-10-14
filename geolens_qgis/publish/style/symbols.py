@@ -85,6 +85,12 @@ def _fill(symbol, layer, style: SymbolStyle, losses: LossLog, where: str) -> Non
         color = layer.color()
         style.color = color.name()
         style.paint["fill-opacity"] = _opacity(symbol, color)
+        offset = layer.offset()
+        if offset.x() or offset.y():
+            style.paint["fill-translate"] = [
+                to_pixels(offset.x(), layer.offsetUnit(), losses, where),
+                to_pixels(offset.y(), layer.offsetUnit(), losses, where),
+            ]
         if layer.brushStyle() == Qt.BrushStyle.NoBrush:
             style.builder["fillDisabled"] = True
         elif layer.brushStyle() != Qt.BrushStyle.SolidPattern:

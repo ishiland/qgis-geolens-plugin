@@ -254,6 +254,13 @@ def test_data_defined_symbol_opacity_is_reported():
     ]
 
 
+def test_a_polygon_offset_becomes_a_translation_in_pixels():
+    layer = make_layer("Polygon")
+    symbol = fill("#4daf4a", offset="2,1", offset_unit="MM")
+    layer.setRenderer(QgsSingleSymbolRenderer(symbol))
+    assert convert(layer)[0]["paint"]["fill-translate"] == [7.56, 3.78]
+
+
 def test_a_dashed_outline_is_reported():
     layer = make_layer("Polygon")
     layer.setRenderer(QgsSingleSymbolRenderer(fill("#4daf4a", outline_style="dash")))
@@ -670,6 +677,32 @@ def test_graduated_size_and_colour_together_keep_the_colour():
     assert losses == [loss("unsupported_renderer", "renderer", "graduated size+color")]
 
 
+def test_a_single_range_is_a_constant_not_an_empty_step():
+    layer = pop_layer()
+    layer.setRenderer(graduated("pop", [colored("#fee5d9")], [0, 1000]))
+    entry, _ = convert(layer)
+    assert entry["style_config"]["breaks"] == []
+    assert entry["paint"]["circle-color"] == [
+        "case",
+        ["==", ["get", "pop"], None],
+        GREY,
+        "#fee5d9",
+    ]
+
+
+def test_classes_with_an_unsized_marker_do_not_become_a_size_ramp():
+    layer = pop_layer()
+    font = QgsMarkerSymbol.createSimple({})
+    font.changeSymbolLayer(
+        0, QgsFontMarkerSymbolLayer("Arial", "A", 8, QColor("#ff0000"))
+    )
+    plain = marker(color="#ff0000", outline_style="no")
+    layer.setRenderer(graduated("pop", [plain, font], [0, 10, 100]))
+    entry, losses = convert(layer)
+    assert "target" not in entry["style_config"]
+    assert "icon_not_uploaded" in [item["kind"] for item in losses]
+
+
 def test_switched_off_ranges_are_hidden_and_the_shared_edge_stays_with_the_lower_range():
     layer = pop_layer()
     renderer = graduated("pop", [colored(c) for c in COLORS], [0, 10, 100, 1000])
@@ -820,6 +853,19 @@ def test_cluster_keeps_the_radius_the_cluster_colours_and_the_point_symbol():
         "circle-color": "#ff0000",
     }
     assert losses == []
+
+
+def test_a_translucent_cluster_symbol_is_reported():
+    layer = pop_layer()
+    renderer = QgsPointClusterRenderer()
+    renderer.setEmbeddedRenderer(QgsSingleSymbolRenderer(colored("#ff0000")))
+    cluster = marker(color="#0000ff", outline_style="no")
+    cluster.setOpacity(0.5)
+    renderer.setClusterSymbol(cluster)
+    layer.setRenderer(renderer)
+    assert convert(layer)[1] == [
+        loss("effect_dropped", "renderer.clusterSymbol", "cluster symbol transparency")
+    ]
 
 
 def test_25d_keeps_the_roof_colour_and_reports_the_walls_and_height():

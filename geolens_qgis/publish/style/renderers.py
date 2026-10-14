@@ -111,9 +111,12 @@ def _class_styles(
 
 
 def _step(column: str, values: list, breaks: list[float], default) -> list:
-    step: list = ["step", ["get", column], values[0]]
-    for edge, value in zip(breaks, values[1:]):
-        step += [edge, value]
+    # A step needs at least one stop, so a single class is just its value.
+    step: list | str | float = values[0]
+    if breaks:
+        step = ["step", ["get", column], values[0]]
+        for edge, value in zip(breaks, values[1:]):
+            step += [edge, value]
     return ["case", ["==", ["get", column], None], default, step]
 
 
@@ -264,7 +267,8 @@ def _graduated(layer, renderer, losses: LossLog) -> RenderedStyle:
     kind = styles[0].style.kind
     colors = [entry.style.color for entry in styles]
     sizes = [entry.style.size for entry in styles]
-    size_varies = kind in SIZE_PROPERTY and len(set(sizes)) > 1
+    sized = all(size is not None for size in sizes)
+    size_varies = kind in SIZE_PROPERTY and sized and len(set(sizes)) > 1
     color_varies = len(set(colors)) > 1
     if size_varies and color_varies:
         losses.add("unsupported_renderer", "renderer", "graduated size+color")
@@ -365,6 +369,12 @@ def _cluster(renderer, losses: LossLog) -> RenderedStyle:
     symbol = renderer.clusterSymbol()
     if symbol is not None and symbol.symbolLayers():
         builder["clusterColor"] = symbol.color().name()
+        if symbol.opacity() * symbol.color().alphaF() < 1:
+            losses.add(
+                "effect_dropped",
+                "renderer.clusterSymbol",
+                "cluster symbol transparency",
+            )
         for symbol_layer in symbol.symbolLayers():
             if symbol_layer.layerType() == "FontMarker":
                 builder["clusterTextColor"] = symbol_layer.color().name()
