@@ -109,6 +109,15 @@ def test_vector_layers_become_flatgeobuf_with_their_checksum(geometry, tmp_path)
     assert exported.temporary
 
 
+def test_a_spatial_layer_with_a_null_geometry_still_exports(tmp_path):
+    layer = memory_layer("Point", "points", rows=2)
+    empty = QgsFeature(layer.fields())
+    empty.setAttributes(["no geometry"])
+    layer.dataProvider().addFeatures([empty])
+    (exported,) = run([layer], tmp_path).result.exported
+    assert feature_count(exported.path) == 3
+
+
 def test_a_table_without_geometry_becomes_a_geopackage(tmp_path):
     task = run([memory_layer("NoGeometry", "people")], tmp_path)
     (exported,) = task.result.exported

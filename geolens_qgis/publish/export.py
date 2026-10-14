@@ -288,6 +288,9 @@ def _write_vector(job: _Job, path: Path, transform_context, is_canceled) -> None
     options = QgsVectorFileWriter.SaveVectorOptions()
     options.driverName = "GPKG" if job.kind == TABLE else "FlatGeobuf"
     options.fileEncoding = "UTF-8"
+    if job.kind == VECTOR:
+        # FlatGeobuf refuses features with no geometry while it builds an index.
+        options.layerOptions = ["SPATIAL_INDEX=NO"]
     # A GeoPackage names its table; FlatGeobuf takes the file name.
     options.layerName = path.stem
     writer = QgsVectorFileWriter.create(
