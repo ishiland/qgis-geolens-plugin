@@ -307,8 +307,8 @@ def _geotiff_path(layer) -> Path | None:
 
     GDAL lists every file a dataset depends on, so a TIFF that also needs a
     world file, PAM or other sidecar is rewritten instead of uploaded bare. So
-    is one whose CRS or no-data values were overridden in QGIS, since the file
-    would still carry the originals.
+    is one whose layer CRS was overridden in QGIS, since the file would still
+    carry the old projection.
     """
     from osgeo import gdal
 
@@ -317,15 +317,8 @@ def _geotiff_path(layer) -> Path | None:
     path = Path(layer.source().split("|", 1)[0])
     if path.suffix.lower() not in _GEOTIFF_SUFFIXES or not path.is_file():
         return None
-    provider = layer.dataProvider()
-    if layer.crs() != provider.crs():
+    if layer.crs() != layer.dataProvider().crs():
         return None
-    for band in range(1, provider.bandCount() + 1):
-        source_ignored = provider.sourceHasNoDataValue(
-            band
-        ) and not provider.useSourceNoDataValue(band)
-        if provider.userNoDataValues(band) or source_ignored:
-            return None
     dataset = gdal.Open(str(path))
     if dataset is None:
         return None

@@ -16,7 +16,6 @@ from qgis.core import (  # noqa: E402
     QgsGeometry,
     QgsPointXY,
     QgsRasterLayer,
-    QgsRasterRange,
     QgsTask,
     QgsVectorLayer,
     QgsVectorTileLayer,
@@ -69,7 +68,7 @@ def memory_layer(geometry, name, rows=3, fields="field=name:string"):
     return layer
 
 
-def geotiff(path, nodata=None):
+def geotiff(path):
     from osgeo import gdal, osr
 
     gdal.UseExceptions()
@@ -79,8 +78,6 @@ def geotiff(path, nodata=None):
     srs.ImportFromEPSG(4326)
     dataset.SetProjection(srs.ExportToWkt())
     dataset.GetRasterBand(1).Fill(7)
-    if nodata is not None:
-        dataset.GetRasterBand(1).SetNoDataValue(nodata)
     dataset.FlushCache()
     return QgsRasterLayer(str(path), path.stem)
 
@@ -264,18 +261,6 @@ def test_the_raster_pipe_belongs_to_the_writing_thread_only_while_writing(
     job = export._Job("id", "dem", "raster", pipe=Pipe())
     export._write_raster(job, tmp_path / "dem.tif", None, None)
     assert calls == [("move", QThread.currentThread()), ("write",), ("move", None)]
-
-
-@pytest.mark.parametrize("override", ["user_range", "source_disabled"])
-def test_a_geotiff_with_overridden_no_data_is_rewritten(override, tmp_path):
-    layer = geotiff(tmp_path / "dem.tif", nodata=0)
-    provider = layer.dataProvider()
-    if override == "user_range":
-        provider.setUserNoDataValue(1, [QgsRasterRange(7, 7)])
-    else:
-        provider.setUseSourceNoDataValue(1, False)
-    (exported,) = run([layer], tmp_path).result.exported
-    assert exported.temporary
 
 
 def test_other_rasters_are_written_as_geotiff(tmp_path):
