@@ -300,15 +300,18 @@ class GeoLensDock(QDockWidget):
         self._message(f"Added vector tiles: {dataset.title}")
 
     def _schedule_refresh(self, layer, dataset, source, provider):
+        # The dock can reconnect to another server while this layer is open;
+        # renewals must keep asking the server that issued the layer.
+        client = self.client
         seconds = refresh_delay_seconds(source.get("expires_in"))
         timer = QTimer(self)
         timer.setSingleShot(True)
 
         def refresh():
-            if not QgsProject.instance().mapLayer(layer.id()) or not self.client:
+            if not QgsProject.instance().mapLayer(layer.id()):
                 return
             try:
-                renewed = self.client.tile_source(dataset.id)
+                renewed = client.tile_source(dataset.id)
                 layer.setDataSource(self._uri(renewed), layer.name(), provider)
                 self._schedule_refresh(layer, dataset, renewed, provider)
             except GeoLensError:

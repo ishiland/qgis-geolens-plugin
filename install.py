@@ -38,7 +38,7 @@ def detect_plugin_dir() -> tuple[Path, bool]:
     """
     root = qgis_settings_root()
     for name in QGIS_VERSION_DIRS:
-        if (root / name / "profiles").is_dir():
+        if (root / name / "profiles/default").is_dir():
             return root / name / PROFILE_PLUGINS, True
     return root / QGIS_VERSION_DIRS[-1] / PROFILE_PLUGINS, False
 

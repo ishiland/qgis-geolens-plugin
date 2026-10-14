@@ -20,13 +20,13 @@ def settings_root(home: Path) -> Path:
 
 
 def test_prefers_an_existing_qgis4_profile(fake_home):
-    (settings_root(fake_home) / "QGIS4/profiles").mkdir(parents=True)
-    (settings_root(fake_home) / "QGIS3/profiles").mkdir(parents=True)
+    (settings_root(fake_home) / "QGIS4/profiles/default").mkdir(parents=True)
+    (settings_root(fake_home) / "QGIS3/profiles/default").mkdir(parents=True)
     assert "QGIS4" in str(install.default_plugin_dir())
 
 
 def test_uses_qgis3_when_it_is_the_only_profile(fake_home):
-    (settings_root(fake_home) / "QGIS3/profiles").mkdir(parents=True)
+    (settings_root(fake_home) / "QGIS3/profiles/default").mkdir(parents=True)
     result = install.default_plugin_dir()
     assert "QGIS3" in str(result)
     assert str(result).endswith("profiles/default/python/plugins")
@@ -49,8 +49,15 @@ def test_reports_no_profile_when_none_exists(fake_home):
     assert found_profile is False
 
 
+def test_ignores_a_profiles_directory_without_the_default_profile(fake_home):
+    """QGIS loads profiles/default unless told otherwise; a lone named profile isn't it."""
+    (settings_root(fake_home) / "QGIS4/profiles/work").mkdir(parents=True)
+    _, found_profile = install.detect_plugin_dir()
+    assert found_profile is False
+
+
 def test_windows_root_honors_appdata(monkeypatch, tmp_path):
     monkeypatch.setattr(sys, "platform", "win32")
     monkeypatch.setenv("APPDATA", str(tmp_path / "Roaming"))
-    (tmp_path / "Roaming/QGIS/QGIS4/profiles").mkdir(parents=True)
+    (tmp_path / "Roaming/QGIS/QGIS4/profiles/default").mkdir(parents=True)
     assert "QGIS4" in str(install.default_plugin_dir())
