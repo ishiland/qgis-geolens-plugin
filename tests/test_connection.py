@@ -684,6 +684,22 @@ def test_a_legacy_key_is_cleared_when_the_server_changes(qgis_iface, unmigrated_
         dock.cleanup()
 
 
+def test_choosing_a_sample_drops_a_pending_refusal(qgis_iface, unmigrated_key):
+    from geolens_qgis.dialogs import GeoLensDock
+
+    dock = GeoLensDock(qgis_iface, opener=_FakeGeoLens())
+    try:
+        dock.url_edit.setText("https://other.example.org")
+        dock.url_edit.editingFinished.emit()
+        assert dock.key_edit.text() == ""
+        dock.samples.setCurrentIndex(1)
+        dock.connect_server()
+        assert dock.client is not None
+        assert dock.client.base_url == dock.samples.itemData(1)
+    finally:
+        dock.cleanup()
+
+
 def test_a_legacy_key_is_never_sent_to_another_server(
     qgis_iface, unmigrated_key, server, other_server
 ):

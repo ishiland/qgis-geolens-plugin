@@ -224,6 +224,8 @@ class GeoLensDock(QDockWidget):
             self.url_edit.setText(url)
             self.auth_select.setConfigId("")
             self.key_edit.clear()
+            self._legacy_key = ""
+            self._forget_credential_warning()
 
     def _selected_dataset(self) -> Dataset | None:
         items = self.results.selectedItems()
