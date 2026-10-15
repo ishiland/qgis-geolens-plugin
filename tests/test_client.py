@@ -195,10 +195,12 @@ class ClientTests(unittest.TestCase):
             "https://gis.example.org:8443",
             "https://other.example.org",
             "",
+            "https://[",
         ):
             with self.subTest(other=other):
                 self.assertFalse(same_origin("https://gis.example.org", other))
         self.assertFalse(same_origin("", ""))
+        self.assertFalse(same_server("https://[::1", "https://[::1"))
 
     def test_parses_tile_scopes(self):
         self.assertEqual(parse_tile_scope("roads:p3"), ("roads", "3"))

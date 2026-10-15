@@ -506,6 +506,30 @@ def test_connecting_with_a_config_saved_for_another_server_sends_nothing(
         dock.cleanup()
 
 
+def test_a_malformed_server_url_deselects_the_config_and_disconnects(
+    qgis_iface, auth_manager, clean_profile_settings
+):
+    from geolens_qgis.dialogs import GeoLensDock
+
+    authcfg = store_api_key(
+        TEST_KEY, "https://gis.example.org", _quiet, "", auth_manager
+    )
+    dock = GeoLensDock(qgis_iface, opener=_FakeGeoLens())
+    messages = _recording_messages(dock)
+    try:
+        dock.url_edit.setText("https://gis.example.org")
+        dock.auth_select.setConfigId(authcfg)
+        dock.connect_server()
+        assert dock.client is not None
+        dock.url_edit.setText("https://[")
+        dock.connect_server()
+        assert dock.client is None and dock.results.topLevelItemCount() == 0
+        assert dock.auth_select.configId() == ""
+        assert "won't send it to https://[" in messages[-1]
+    finally:
+        dock.cleanup()
+
+
 def test_connect_right_after_a_server_edit_still_refuses_once(
     qgis_iface, auth_manager, clean_profile_settings, server, other_server
 ):

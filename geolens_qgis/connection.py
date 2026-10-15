@@ -163,7 +163,10 @@ def auth_server_mismatch(authcfg: str, url: str, auth_manager=None) -> str:
 
 
 def _origin_label(url: str) -> str:
-    parsed = urlparse(with_default_scheme(url))
+    try:
+        parsed = urlparse(with_default_scheme(url))
+    except ValueError:
+        return url.strip()
     host = parsed.netloc.rpartition("@")[2]
     return f"{parsed.scheme.lower()}://{host.lower()}" if host else url.strip()
 

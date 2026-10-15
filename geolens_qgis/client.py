@@ -64,8 +64,8 @@ _DEFAULT_PORTS = {"http": 80, "https": 443}
 
 
 def _server_key(url: str) -> tuple[str, str, int | None, str] | None:
-    parsed = urlparse(url.strip())
     try:
+        parsed = urlparse(url.strip())
         port = parsed.port
     except ValueError:
         return None
