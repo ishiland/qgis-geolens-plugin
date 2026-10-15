@@ -107,7 +107,7 @@ class GeoLensDock(QDockWidget):
         form = QFormLayout()
         self.url_edit = QLineEdit()
         self.url_edit.setPlaceholderText("https://datasets.geolibre.app")
-        self.url_edit.editingFinished.connect(self._drop_credentials_for_other_server)
+        self.url_edit.editingFinished.connect(self._server_edited)
         self.auth_select = QgsAuthConfigSelect(self)
         self.auth_select.selectedConfigIdChanged.connect(
             self._forget_credential_warning
@@ -300,6 +300,12 @@ class GeoLensDock(QDockWidget):
 
     def _forget_credential_warning(self, *_):
         self._credential_warning = ""
+
+    def _server_edited(self):
+        # A refusal is meant for the Connect click that ends this edit, not
+        # for a server typed after it.
+        self._forget_credential_warning()
+        self._drop_credentials_for_other_server()
 
     def connect_server(self):
         self._drop_credentials_for_other_server()
