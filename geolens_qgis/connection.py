@@ -29,6 +29,7 @@ from .client import (
 SERVER_SETTING = "geolens/server"
 AUTHCFG_SETTING = "geolens/authcfg"
 LEGACY_KEY_SETTING = "geolens/api_key"
+LEGACY_KEY_SERVER_SETTING = "geolens/api_key_server"
 AUTH_HEADER = "X-Api-Key"
 
 
@@ -146,14 +147,14 @@ def auth_server_mismatch(authcfg: str, url: str, auth_manager=None) -> str:
     saved_for = config.uri().strip() if loaded else ""
     if saved_for and same_origin(saved_for, url):
         return ""
-    target = _origin_label(url)
+    target = origin_label(url)
     if saved_for:
         return QCoreApplication.translate(
             "GeoLens",
             "The selected authentication configuration was saved for {saved}, "
             "so GeoLens won't send it to {target}. Choose a configuration saved "
             "for this server, or paste its API key.",
-        ).format(saved=_origin_label(saved_for), target=target)
+        ).format(saved=origin_label(saved_for), target=target)
     return QCoreApplication.translate(
         "GeoLens",
         "The selected authentication configuration doesn't name a server, so "
@@ -162,7 +163,8 @@ def auth_server_mismatch(authcfg: str, url: str, auth_manager=None) -> str:
     ).format(target=target)
 
 
-def _origin_label(url: str) -> str:
+def origin_label(url: str) -> str:
+    """`url` as scheme://host[:port] for messages, or as typed when it won't parse."""
     try:
         parsed = urlparse(with_default_scheme(url))
     except ValueError:
@@ -249,9 +251,9 @@ def migrate_plaintext_key(settings, notify, auth_manager=None) -> str:
     """
     key = str(settings.value(LEGACY_KEY_SETTING, "") or "").strip()
     if not key:
-        settings.remove(LEGACY_KEY_SETTING)
+        forget_legacy_key(settings)
         return ""
-    server_url = str(settings.value(SERVER_SETTING, "") or "")
+    server_url = legacy_key_server(settings)
     authcfg = store_api_key(
         key,
         server_url,
@@ -269,7 +271,7 @@ def migrate_plaintext_key(settings, notify, auth_manager=None) -> str:
         return ""
     if not settings.value(AUTHCFG_SETTING, ""):
         settings.setValue(AUTHCFG_SETTING, authcfg)
-    settings.remove(LEGACY_KEY_SETTING)
+    forget_legacy_key(settings)
     settings.sync()
     notify(
         "Your GeoLens API key is now in the QGIS authentication database, and "
@@ -277,3 +279,23 @@ def migrate_plaintext_key(settings, notify, auth_manager=None) -> str:
         Qgis.MessageLevel.Success,
     )
     return authcfg
+
+
+def legacy_key_server(settings) -> str:
+    """The server a plain-text key from an older version belongs to, or "".
+
+    Older versions saved the key next to the last server URL. Connecting
+    elsewhere overwrites that URL, so the first read records it for the key.
+    """
+    if not settings.contains(LEGACY_KEY_SERVER_SETTING):
+        settings.setValue(
+            LEGACY_KEY_SERVER_SETTING,
+            str(settings.value(SERVER_SETTING, "") or "").strip(),
+        )
+    return str(settings.value(LEGACY_KEY_SERVER_SETTING, "") or "")
+
+
+def forget_legacy_key(settings) -> None:
+    """Delete a plain-text key from an older version and the server it belongs to."""
+    settings.remove(LEGACY_KEY_SETTING)
+    settings.remove(LEGACY_KEY_SERVER_SETTING)

@@ -51,7 +51,9 @@ versions could keep the key in plain text in the profile settings; opening the
 GeoLens panel moves such a key into the authentication database and deletes
 the plain-text copy. If that move fails or you cancel the master password
 prompt, the key stays where it was and the panel tries again in your next QGIS
-session. No key
+session. Until then the panel fills the key in only for the server it was saved
+with, and clears it when the server URL changes to another server. A key saved
+without a server URL isn't filled in at all; paste it again. No key
 is written to a layer source or a project file.
 
 An authentication configuration is sent only to the server in its URL field:

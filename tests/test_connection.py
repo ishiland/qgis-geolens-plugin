@@ -18,6 +18,7 @@ from qgis.PyQt.QtCore import QSettings  # noqa: E402
 from geolens_qgis.client import GeoLensError  # noqa: E402
 from geolens_qgis.connection import (  # noqa: E402
     AUTHCFG_SETTING,
+    LEGACY_KEY_SERVER_SETTING,
     LEGACY_KEY_SETTING,
     SERVER_SETTING,
     GeoLensConnection,
@@ -259,6 +260,7 @@ def test_migration_moves_the_key_and_deletes_the_plain_text(auth_manager, settin
     authcfg = migrate_plaintext_key(settings, notify, recording)
     assert authcfg
     assert settings.value(LEGACY_KEY_SETTING) is None
+    assert settings.value(LEGACY_KEY_SERVER_SETTING) is None
     assert settings.value(AUTHCFG_SETTING) == authcfg
     loaded, config = auth_manager.loadAuthenticationConfig(
         authcfg, QgsAuthMethodConfig(), True
@@ -283,8 +285,22 @@ def test_a_failed_or_cancelled_write_keeps_the_plain_text_key(settings):
     failing = _RecordingAuthManager(events, store_ok=False)
     assert migrate_plaintext_key(settings, lambda *e: events.append(e), failing) == ""
     assert settings.value(LEGACY_KEY_SETTING) == TEST_KEY
+    assert settings.value(LEGACY_KEY_SERVER_SETTING) == "https://gis.example.org"
     assert settings.value(AUTHCFG_SETTING) is None
     assert events[-1][1] == Qgis.MessageLevel.Warning
+
+
+def test_migration_binds_the_key_to_the_server_it_was_saved_with(
+    auth_manager, settings
+):
+    _legacy(settings)
+    # A later session connected elsewhere and overwrote the server setting.
+    settings.setValue(LEGACY_KEY_SERVER_SETTING, "https://first.example.org")
+    authcfg = migrate_plaintext_key(settings, _quiet, auth_manager)
+    loaded, config = auth_manager.loadAuthenticationConfig(
+        authcfg, QgsAuthMethodConfig(), False
+    )
+    assert loaded and config.uri() == "https://first.example.org"
 
 
 def test_migration_keeps_a_config_the_user_already_selected(auth_manager, settings):
@@ -411,6 +427,7 @@ def test_opening_the_dock_migrates_a_saved_key(
         authcfg = dock.auth_select.configId()
         assert authcfg
         assert QSettings().value(LEGACY_KEY_SETTING) is None
+        assert QSettings().value(LEGACY_KEY_SERVER_SETTING) is None
         assert QSettings().value(AUTHCFG_SETTING) == authcfg
         assert dock.key_edit.text() == ""
     finally:
@@ -604,6 +621,94 @@ def test_a_cancelled_migration_keeps_the_key_through_the_session(
     finally:
         dock.cleanup()
         assert auth_manager.setMasterPassword(MASTER, True)
+
+
+@pytest.fixture
+def unmigrated_key(auth_manager, clean_profile_settings):
+    """A plain-text key the dock can't move, as when the prompt is cancelled."""
+    _legacy(clean_profile_settings)
+    auth_manager.clearMasterPassword()
+    yield clean_profile_settings
+    assert auth_manager.setMasterPassword(MASTER, True)
+
+
+def test_a_legacy_key_is_cleared_when_the_server_changes(qgis_iface, unmigrated_key):
+    from geolens_qgis.dialogs import GeoLensDock
+
+    dock = GeoLensDock(qgis_iface, opener=_FakeGeoLens())
+    messages = _recording_messages(dock)
+    try:
+        assert dock.key_edit.text() == TEST_KEY
+        dock.url_edit.setText("HTTPS://GIS.example.org:443/geolens")
+        dock.url_edit.editingFinished.emit()
+        assert dock.key_edit.text() == TEST_KEY
+        dock.url_edit.setText("https://other.example.org")
+        dock.url_edit.editingFinished.emit()
+        assert dock.key_edit.text() == ""
+        assert "belongs to https://gis.example.org" in messages[-1]
+        assert TEST_KEY not in messages[-1]
+        assert QSettings().value(LEGACY_KEY_SETTING) == TEST_KEY
+    finally:
+        dock.cleanup()
+
+
+def test_a_legacy_key_is_never_sent_to_another_server(
+    qgis_iface, unmigrated_key, server, other_server
+):
+    from geolens_qgis.dialogs import GeoLensDock
+
+    server.routes["/api/search/datasets/"] = _json({"features": []})
+    unmigrated_key.setValue(LEGACY_KEY_SERVER_SETTING, other_server.url)
+    unmigrated_key.setValue(SERVER_SETTING, server.url)
+    dock = GeoLensDock(qgis_iface)
+    try:
+        assert dock.url_edit.text() == server.url
+        assert dock.key_edit.text() == TEST_KEY
+        dock.connect_server()
+        assert server.seen == [] and other_server.seen == []
+        assert dock.client is None
+        dock.connect_server()
+        assert dock.client is not None
+        assert set(server.keys_seen()) == {None}
+    finally:
+        dock.cleanup()
+
+
+def test_a_legacy_key_without_a_server_is_not_filled_in(
+    qgis_iface, auth_manager, clean_profile_settings
+):
+    from geolens_qgis.dialogs import GeoLensDock
+
+    clean_profile_settings.setValue(LEGACY_KEY_SETTING, TEST_KEY)
+    auth_manager.clearMasterPassword()
+    dock = GeoLensDock(qgis_iface, opener=_FakeGeoLens())
+    try:
+        assert dock.key_edit.text() == ""
+        assert "doesn't record which server" in dock.status.text()
+        assert QSettings().value(LEGACY_KEY_SETTING) == TEST_KEY
+    finally:
+        dock.cleanup()
+        assert auth_manager.setMasterPassword(MASTER, True)
+
+
+def test_a_key_typed_over_the_legacy_key_follows_the_server_field(
+    qgis_iface, unmigrated_key
+):
+    from qgis.PyQt.QtTest import QTest
+
+    from geolens_qgis.dialogs import GeoLensDock
+
+    dock = GeoLensDock(qgis_iface, opener=_FakeGeoLens())
+    try:
+        dock.key_edit.clear()
+        QTest.keyClicks(dock.key_edit, TEST_KEY)
+        dock.url_edit.setText("https://other.example.org")
+        dock.url_edit.editingFinished.emit()
+        assert dock.key_edit.text() == TEST_KEY
+        dock.connect_server()
+        assert dock.client is not None
+    finally:
+        dock.cleanup()
 
 
 def _raise_http_error(request, timeout=0):
