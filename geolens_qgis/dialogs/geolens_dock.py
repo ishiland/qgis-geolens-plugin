@@ -83,9 +83,12 @@ class GeoLensDock(QDockWidget):
         self.refresh_timers: dict[str, QTimer] = {}
         self.editing_enabled = False
         self._credential_warning = ""
-        # A plain-text key from an older version, while it is in the key field.
+        # A plain-text key from an older version and its server, kept while
+        # the user hasn't typed over it so a return to that server refills it.
         self._legacy_key = ""
         self._legacy_key_server = ""
+        # The auth config last deselected for another server.
+        self._dropped_authcfg = ""
         self._build_ui()
         self._restore_settings()
 
@@ -109,9 +112,7 @@ class GeoLensDock(QDockWidget):
         self.url_edit.setPlaceholderText("https://datasets.geolibre.app")
         self.url_edit.editingFinished.connect(self._server_edited)
         self.auth_select = QgsAuthConfigSelect(self)
-        self.auth_select.selectedConfigIdChanged.connect(
-            self._forget_credential_warning
-        )
+        self.auth_select.selectedConfigIdChanged.connect(self._auth_selection_changed)
         self.key_edit = QLineEdit()
         self.key_edit.setPlaceholderText(
             "Optional; used instead of the authentication above"
@@ -211,8 +212,9 @@ class GeoLensDock(QDockWidget):
                 Qgis.MessageLevel.Warning,
             )
             return
-        self.key_edit.setText(key)
         self._legacy_key, self._legacy_key_server = key, server
+        if same_origin(server, self.url_edit.text()):
+            self.key_edit.setText(key)
 
     def _forget_legacy_key_field(self, *_):
         # A key the user typed belongs to whatever server they typed it for.
@@ -264,7 +266,6 @@ class GeoLensDock(QDockWidget):
         if legacy and self.key_edit.text().strip() == legacy:
             if not same_origin(self._legacy_key_server, url):
                 self.key_edit.clear()
-                self._legacy_key = ""
                 reasons.append(
                     QCoreApplication.translate(
                         "GeoLens",
@@ -279,6 +280,7 @@ class GeoLensDock(QDockWidget):
         mismatch = auth_server_mismatch(authcfg, url) if authcfg else ""
         if mismatch:
             self.auth_select.setConfigId("")
+            self._dropped_authcfg = authcfg
             reasons.append(
                 mismatch
                 + " "
@@ -300,17 +302,57 @@ class GeoLensDock(QDockWidget):
         )
         self._message(self._credential_warning, Qgis.MessageLevel.Warning)
 
+    def _restore_credentials_for_this_server(self):
+        """Bring back a legacy key or dropped auth config the server owns again."""
+        url = self.url_edit.text()
+        restored = []
+        if (
+            self._legacy_key
+            and not self.key_edit.text()
+            and same_origin(self._legacy_key_server, url)
+        ):
+            self.key_edit.setText(self._legacy_key)
+            restored.append(
+                QCoreApplication.translate(
+                    "GeoLens", "The saved API key for {server} is filled in."
+                ).format(server=origin_label(url))
+            )
+        dropped = self._dropped_authcfg
+        if (
+            dropped
+            and not self.auth_select.configId()
+            and not auth_server_mismatch(dropped, url)
+        ):
+            self.auth_select.setConfigId(dropped)
+            restored.append(
+                QCoreApplication.translate(
+                    "GeoLens",
+                    "The authentication configuration saved for {server} is "
+                    "selected again.",
+                ).format(server=origin_label(url))
+            )
+        if restored:
+            self._forget_credential_warning()
+            self._message(" ".join(restored))
+
     def _forget_credential_warning(self, *_):
         self._credential_warning = ""
+
+    def _auth_selection_changed(self, *_):
+        # Any pick, including clearing it, supersedes a deselection.
+        self._forget_credential_warning()
+        self._dropped_authcfg = ""
 
     def _server_edited(self):
         # A refusal is meant for the Connect click that ends this edit, not
         # for a server typed after it.
         self._forget_credential_warning()
         self._drop_credentials_for_other_server()
+        self._restore_credentials_for_this_server()
 
     def connect_server(self):
         self._drop_credentials_for_other_server()
+        self._restore_credentials_for_this_server()
         key = self.key_edit.text().strip()
         warning, self._credential_warning = self._credential_warning, ""
         if warning and not key:

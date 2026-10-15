@@ -148,6 +148,13 @@ def auth_server_mismatch(authcfg: str, url: str, auth_manager=None) -> str:
     if saved_for and same_origin(saved_for, url):
         return ""
     target = origin_label(url)
+    if not loaded:
+        return QCoreApplication.translate(
+            "GeoLens",
+            "The selected authentication configuration no longer exists in the "
+            "QGIS authentication database, so GeoLens won't use it for {target}. "
+            "Choose another configuration.",
+        ).format(target=target)
     if saved_for:
         return QCoreApplication.translate(
             "GeoLens",

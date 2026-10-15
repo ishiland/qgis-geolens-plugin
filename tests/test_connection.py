@@ -122,19 +122,39 @@ def test_a_config_goes_to_any_path_on_the_server_it_was_saved_for(auth_manager, 
     assert server.keys_seen() == [TEST_KEY]
 
 
+_CLIENT_CALLS = {
+    "search": lambda client: client.search(),
+    "tile-token": lambda client: client.tile_source("d"),
+    "features": lambda client: client.features("d"),
+    "create": lambda client: client.create_feature("d", {"type": "Feature"}),
+    "update": lambda client: client.update_feature("d", 1, {"type": "Feature"}),
+    "delete": lambda client: client.delete_feature("d", 1),
+}
+
+
+@pytest.mark.parametrize("call", sorted(_CLIENT_CALLS))
 @pytest.mark.parametrize("saved_for", ["other-port", "https", "nothing"])
 def test_a_config_is_sent_to_no_other_server(
-    auth_manager, server, other_server, saved_for
+    auth_manager, server, other_server, saved_for, call
 ):
-    server.routes["/api/search/datasets/"] = _json({"features": []})
     uri = {
         "other-port": other_server.url,
         "https": server.url.replace("http://", "https://"),
         "nothing": "",
     }[saved_for]
     authcfg = store_api_key(TEST_KEY, uri, _quiet, "", auth_manager)
+    client = GeoLensConnection(server.url, authcfg=authcfg).client
     with pytest.raises(GeoLensError, match=f"won't send it to {server.url}"):
-        GeoLensConnection(server.url, authcfg=authcfg).client.search()
+        _CLIENT_CALLS[call](client)
+    assert server.seen == [] and other_server.seen == []
+
+
+def test_capabilities_send_nothing_to_another_server(
+    auth_manager, server, other_server
+):
+    # Capabilities fall back to defaults on any error, so only the traffic shows.
+    authcfg = store_api_key(TEST_KEY, other_server.url, _quiet, "", auth_manager)
+    GeoLensConnection(server.url, authcfg=authcfg).client.capabilities()
     assert server.seen == [] and other_server.seen == []
 
 
@@ -193,7 +213,7 @@ def test_a_config_that_sends_no_api_key_is_refused(auth_manager, server):
 
 def test_an_unusable_auth_config_fails_instead_of_going_anonymous(auth_manager, server):
     server.routes["/api/search/datasets/"] = _json({"features": []})
-    with pytest.raises(GeoLensError):
+    with pytest.raises(GeoLensError, match="no longer exists"):
         GeoLensConnection(server.url, authcfg="missing").client.search()
     assert server.seen == []
 
@@ -612,6 +632,41 @@ def test_a_refusal_is_dropped_when_the_server_changes_again(
         dock.cleanup()
 
 
+def test_a_config_comes_back_when_the_server_does(
+    qgis_iface, auth_manager, clean_profile_settings
+):
+    from geolens_qgis.dialogs import GeoLensDock
+
+    authcfg = store_api_key(
+        TEST_KEY, "https://gis.example.org", _quiet, "", auth_manager
+    )
+    dock = GeoLensDock(qgis_iface, opener=_FakeGeoLens())
+    messages = _recording_messages(dock)
+    try:
+        dock.auth_select.setConfigId(authcfg)
+        dock.url_edit.setText("https://gis.example.orgg")
+        dock.url_edit.editingFinished.emit()
+        assert dock.auth_select.configId() == ""
+        dock.url_edit.setText("https://GIS.example.org/")
+        dock.url_edit.editingFinished.emit()
+        assert dock.auth_select.configId() == authcfg
+        assert "selected again" in messages[-1]
+        dock.url_edit.setText("https://other.example.org")
+        dock.url_edit.editingFinished.emit()
+        dock.url_edit.setText("https://gis.example.org")
+        dock.connect_server()
+        assert dock.client is not None
+        assert dock.auth_select.configId() == authcfg
+        dock.auth_select.setConfigId("")
+        dock.url_edit.setText("https://other.example.org")
+        dock.url_edit.editingFinished.emit()
+        dock.url_edit.setText("https://gis.example.org")
+        dock.url_edit.editingFinished.emit()
+        assert dock.auth_select.configId() == ""
+    finally:
+        dock.cleanup()
+
+
 def test_connecting_with_a_config_saved_for_this_server_sends_it(
     qgis_iface, auth_manager, clean_profile_settings, server
 ):
@@ -680,6 +735,35 @@ def test_a_legacy_key_is_cleared_when_the_server_changes(qgis_iface, unmigrated_
         assert "belongs to https://gis.example.org" in messages[-1]
         assert TEST_KEY not in messages[-1]
         assert QSettings().value(LEGACY_KEY_SETTING) == TEST_KEY
+        dock.url_edit.setText("https://gis.example.org/")
+        dock.url_edit.editingFinished.emit()
+        assert dock.key_edit.text() == TEST_KEY
+    finally:
+        dock.cleanup()
+
+
+def test_a_legacy_key_for_another_server_is_not_filled_in(
+    qgis_iface, auth_manager, unmigrated_key
+):
+    from geolens_qgis.dialogs import GeoLensDock
+
+    assert auth_manager.setMasterPassword(MASTER, True)
+    authcfg = store_api_key(
+        TEST_KEY, "https://other.example.org", _quiet, "", auth_manager
+    )
+    auth_manager.clearMasterPassword()
+    unmigrated_key.setValue(LEGACY_KEY_SERVER_SETTING, "https://gis.example.org")
+    unmigrated_key.setValue(SERVER_SETTING, "https://other.example.org")
+    unmigrated_key.setValue(AUTHCFG_SETTING, authcfg)
+    dock = GeoLensDock(qgis_iface, opener=_FakeGeoLens())
+    try:
+        assert dock.key_edit.text() == ""
+        assert dock.auth_select.configId() == authcfg
+        dock.connect_server()
+        assert dock.client is not None
+        dock.url_edit.setText("https://gis.example.org")
+        dock.url_edit.editingFinished.emit()
+        assert dock.key_edit.text() == TEST_KEY
     finally:
         dock.cleanup()
 
@@ -707,11 +791,12 @@ def test_a_legacy_key_is_never_sent_to_another_server(
 
     server.routes["/api/search/datasets/"] = _json({"features": []})
     unmigrated_key.setValue(LEGACY_KEY_SERVER_SETTING, other_server.url)
-    unmigrated_key.setValue(SERVER_SETTING, server.url)
+    unmigrated_key.setValue(SERVER_SETTING, other_server.url)
     dock = GeoLensDock(qgis_iface)
     try:
-        assert dock.url_edit.text() == server.url
         assert dock.key_edit.text() == TEST_KEY
+        # Connect can arrive without the field losing focus first.
+        dock.url_edit.setText(server.url)
         dock.connect_server()
         assert server.seen == [] and other_server.seen == []
         assert dock.client is None
