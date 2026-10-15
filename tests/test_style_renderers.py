@@ -946,6 +946,23 @@ def test_graduated_reports_overlapping_ranges():
     )
 
 
+def test_graduated_ranges_that_touch_in_reverse_order_are_overlapping():
+    layer = pop_layer()
+    ranges = [
+        QgsRendererRange(10, 20, colored(COLORS[0]), "high"),
+        QgsRendererRange(0, 10, colored(COLORS[1]), "low"),
+    ]
+    layer.setRenderer(QgsGraduatedSymbolRenderer("pop", ranges))
+    assert (
+        loss(
+            "filter_not_representable",
+            "renderer.ranges",
+            "overlapping ranges (QGIS uses the first match)",
+        )
+        in convert(layer)[1]
+    )
+
+
 def test_graduated_ranges_that_only_touch_are_not_overlapping():
     layer = pop_layer()
     layer.setRenderer(

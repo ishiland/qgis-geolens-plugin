@@ -294,13 +294,20 @@ def _has_value(layer, column: str, values: list[float]) -> bool:
     return any(True for _ in layer.getFeatures(request))
 
 
-def _overlaps(ranges) -> bool:
-    """Whether any range starts below where an earlier one ends (ranges sorted)."""
-    reach = -math.inf
-    for r in ranges:
-        if r.lowerValue() < reach:
+def _overlaps(configured) -> bool:
+    """Whether a value can fall in two ranges and QGIS would not pick the lower.
+
+    QGIS uses the first matching range in configured order. The converter gives
+    an edge value to the lower range, so ranges that only touch overlap just
+    when the higher one is configured first.
+    """
+    ordered = sorted(enumerate(configured), key=lambda pair: pair[1].lowerValue())
+    reach, owner = -math.inf, -1
+    for position, r in ordered:
+        if r.lowerValue() < reach or (r.lowerValue() == reach and position < owner):
             return True
-        reach = max(reach, r.upperValue())
+        if r.upperValue() >= reach:
+            reach, owner = r.upperValue(), position
     return False
 
 
@@ -317,7 +324,7 @@ def _graduated(layer, renderer, losses: LossLog) -> RenderedStyle:
     )
     method = _METHODS.get(renderer.classificationMethod().id(), "manual")
     edges = [r.upperValue() for r in ranges[:-1]]
-    if _overlaps(ranges):
+    if _overlaps(renderer.ranges()):
         # QGIS draws the first matching range; a step expression cannot.
         losses.add(
             "filter_not_representable",
