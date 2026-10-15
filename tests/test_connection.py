@@ -303,6 +303,15 @@ def test_migration_binds_the_key_to_the_server_it_was_saved_with(
     assert loaded and config.uri() == "https://first.example.org"
 
 
+def test_migration_keeps_a_key_saved_without_a_server(settings):
+    settings.setValue(LEGACY_KEY_SETTING, TEST_KEY)
+    events = []
+    recording = _RecordingAuthManager(events)
+    assert migrate_plaintext_key(settings, lambda *e: events.append(e), recording) == ""
+    assert "store" not in events
+    assert settings.value(LEGACY_KEY_SETTING) == TEST_KEY
+
+
 def test_migration_keeps_a_config_the_user_already_selected(auth_manager, settings):
     _legacy(settings)
     settings.setValue(AUTHCFG_SETTING, "chosen1")
@@ -680,15 +689,14 @@ def test_a_legacy_key_without_a_server_is_not_filled_in(
     from geolens_qgis.dialogs import GeoLensDock
 
     clean_profile_settings.setValue(LEGACY_KEY_SETTING, TEST_KEY)
-    auth_manager.clearMasterPassword()
     dock = GeoLensDock(qgis_iface, opener=_FakeGeoLens())
     try:
         assert dock.key_edit.text() == ""
+        assert dock.auth_select.configId() == ""
         assert "doesn't record which server" in dock.status.text()
         assert QSettings().value(LEGACY_KEY_SETTING) == TEST_KEY
     finally:
         dock.cleanup()
-        assert auth_manager.setMasterPassword(MASTER, True)
 
 
 def test_a_key_typed_over_the_legacy_key_follows_the_server_field(

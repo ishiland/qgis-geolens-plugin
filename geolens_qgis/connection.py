@@ -246,7 +246,9 @@ def migrate_plaintext_key(settings, notify, auth_manager=None) -> str:
     On success the plain text setting is deleted, the new config becomes the
     selected one unless the user already selected another, and its id is
     returned. On failure the plain text
-    key is kept so a later attempt can move it, and "" is returned.
+    key is kept so a later attempt can move it, and "" is returned. A key
+    saved without a server URL is kept too, since a config without one is
+    never sent.
     `notify(text, level)` reports progress in the message bar.
     """
     key = str(settings.value(LEGACY_KEY_SETTING, "") or "").strip()
@@ -254,6 +256,8 @@ def migrate_plaintext_key(settings, notify, auth_manager=None) -> str:
         forget_legacy_key(settings)
         return ""
     server_url = legacy_key_server(settings)
+    if not server_url:
+        return ""
     authcfg = store_api_key(
         key,
         server_url,
