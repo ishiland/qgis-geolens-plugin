@@ -506,6 +506,39 @@ def test_connecting_with_a_config_saved_for_another_server_sends_nothing(
         dock.cleanup()
 
 
+def test_connect_right_after_a_server_edit_still_refuses_once(
+    qgis_iface, auth_manager, clean_profile_settings, server, other_server
+):
+    from geolens_qgis.dialogs import GeoLensDock
+
+    server.routes["/api/search/datasets/"] = _json({"features": []})
+    saved_elsewhere = store_api_key(
+        TEST_KEY, other_server.url, _quiet, "", auth_manager
+    )
+    saved_here = store_api_key(TEST_KEY, server.url, _quiet, "", auth_manager)
+    dock = GeoLensDock(qgis_iface)
+    messages = _recording_messages(dock)
+    try:
+        dock.auth_select.setConfigId(saved_elsewhere)
+        dock.url_edit.setText(server.url)
+        # Clicking Connect takes focus from the Server field first.
+        dock.url_edit.editingFinished.emit()
+        dock.connect_server()
+        assert server.seen == [] and other_server.seen == []
+        assert dock.client is None
+        assert "Click Connect again" in messages[-1]
+        dock.connect_server()
+        assert dock.client is not None
+        assert set(server.keys_seen()) == {None}
+        dock.auth_select.setConfigId(saved_elsewhere)
+        dock.url_edit.editingFinished.emit()
+        dock.auth_select.setConfigId(saved_here)
+        dock.connect_server()
+        assert server.keys_seen()[-1] == TEST_KEY
+    finally:
+        dock.cleanup()
+
+
 def test_connecting_with_a_config_saved_for_this_server_sends_it(
     qgis_iface, auth_manager, clean_profile_settings, server
 ):

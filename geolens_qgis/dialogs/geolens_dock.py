@@ -73,6 +73,7 @@ class GeoLensDock(QDockWidget):
         self.temp_files: list[str] = []
         self.refresh_timers: dict[str, QTimer] = {}
         self.editing_enabled = False
+        self._auth_warning = ""
         self._build_ui()
         self._restore_settings()
 
@@ -96,6 +97,7 @@ class GeoLensDock(QDockWidget):
         self.url_edit.setPlaceholderText("https://datasets.geolibre.app")
         self.url_edit.editingFinished.connect(self._deselect_auth_for_other_server)
         self.auth_select = QgsAuthConfigSelect(self)
+        self.auth_select.selectedConfigIdChanged.connect(self._forget_auth_warning)
         self.key_edit = QLineEdit()
         self.key_edit.setPlaceholderText(
             "Optional; used instead of the authentication above"
@@ -212,30 +214,40 @@ class GeoLensDock(QDockWidget):
         self.status.setText(text)
         self.iface.messageBar().pushMessage("GeoLens", text, level=level, duration=6)
 
-    def _deselect_auth_for_other_server(self) -> bool:
-        """Clear an auth config saved for another server; True when one was."""
+    def _deselect_auth_for_other_server(self):
+        """Clear an auth config saved for another server, and say why."""
         authcfg = self.auth_select.configId()
         url = self.url_edit.text()
         if not authcfg or not url.strip():
-            return False
+            return
         mismatch = auth_server_mismatch(authcfg, url)
         if not mismatch:
-            return False
+            return
         self.auth_select.setConfigId("")
-        self._message(
+        # Editing the URL and clicking Connect deselects on focus loss before
+        # the click lands, so the click must still refuse once.
+        self._auth_warning = (
             mismatch
             + " "
             + QCoreApplication.translate(
-                "GeoLens", "The configuration is no longer selected."
-            ),
-            Qgis.MessageLevel.Warning,
+                "GeoLens",
+                "The configuration is no longer selected. Click Connect again "
+                "to connect without it.",
+            )
         )
-        return True
+        self._message(self._auth_warning, Qgis.MessageLevel.Warning)
+
+    def _forget_auth_warning(self, *_):
+        self._auth_warning = ""
 
     def connect_server(self):
         key = self.key_edit.text().strip()
-        if not key and self._deselect_auth_for_other_server():
+        if not key:
+            self._deselect_auth_for_other_server()
+        warning, self._auth_warning = self._auth_warning, ""
+        if warning and not key:
             self._disconnect()
+            self._message(warning, Qgis.MessageLevel.Warning)
             return
         try:
             connection = GeoLensConnection(
