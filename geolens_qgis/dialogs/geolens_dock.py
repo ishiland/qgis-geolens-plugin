@@ -8,7 +8,7 @@ import os
 import tempfile
 import webbrowser
 
-from qgis.PyQt.QtCore import Qt, QSettings, QTimer
+from qgis.PyQt.QtCore import QCoreApplication, Qt, QSettings, QTimer
 from qgis.PyQt.QtWidgets import (
     QAbstractItemView,
     QCheckBox,
@@ -46,6 +46,7 @@ from ..connection import (
     LEGACY_KEY_SETTING,
     SERVER_SETTING,
     GeoLensConnection,
+    auth_server_mismatch,
     migrate_plaintext_key,
     store_api_key,
 )
@@ -93,6 +94,7 @@ class GeoLensDock(QDockWidget):
         form = QFormLayout()
         self.url_edit = QLineEdit()
         self.url_edit.setPlaceholderText("https://datasets.geolibre.app")
+        self.url_edit.editingFinished.connect(self._deselect_auth_for_other_server)
         self.auth_select = QgsAuthConfigSelect(self)
         self.key_edit = QLineEdit()
         self.key_edit.setPlaceholderText(
@@ -210,8 +212,31 @@ class GeoLensDock(QDockWidget):
         self.status.setText(text)
         self.iface.messageBar().pushMessage("GeoLens", text, level=level, duration=6)
 
+    def _deselect_auth_for_other_server(self) -> bool:
+        """Clear an auth config saved for another server; True when one was."""
+        authcfg = self.auth_select.configId()
+        url = self.url_edit.text()
+        if not authcfg or not url.strip():
+            return False
+        mismatch = auth_server_mismatch(authcfg, url)
+        if not mismatch:
+            return False
+        self.auth_select.setConfigId("")
+        self._message(
+            mismatch
+            + " "
+            + QCoreApplication.translate(
+                "GeoLens", "The configuration is no longer selected."
+            ),
+            Qgis.MessageLevel.Warning,
+        )
+        return True
+
     def connect_server(self):
         key = self.key_edit.text().strip()
+        if not key and self._deselect_auth_for_other_server():
+            self._disconnect()
+            return
         try:
             connection = GeoLensConnection(
                 self.url_edit.text(),

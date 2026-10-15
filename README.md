@@ -54,6 +54,12 @@ prompt, the key stays where it was and the panel tries again in your next QGIS
 session. No key
 is written to a layer source or a project file.
 
+An authentication configuration is sent only to the server in its URL field:
+the same scheme, host and port. Configurations the plugin saves record the
+server they were saved for. A configuration you create yourself needs that URL
+set, or the panel won't use it. Changing the server URL to another server
+deselects a configuration saved for a different one.
+
 Private vector and raster tiles load with a short-lived signed token that the
 plugin renews while the layer is open. No API key is written into a layer
 source URL. A saved project keeps the last token, which expires within minutes,

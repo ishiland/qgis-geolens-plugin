@@ -15,10 +15,16 @@ from qgis.core import (
     QgsBlockingNetworkRequest,
     QgsFeedback,
 )
-from qgis.PyQt.QtCore import QByteArray, QUrl
+from qgis.PyQt.QtCore import QByteArray, QCoreApplication, QUrl
 from qgis.PyQt.QtNetwork import QNetworkRequest
 
-from .client import Dataset, GeoLensClient, GeoLensError
+from .client import (
+    Dataset,
+    GeoLensClient,
+    GeoLensError,
+    same_origin,
+    with_default_scheme,
+)
 
 SERVER_SETTING = "geolens/server"
 AUTHCFG_SETTING = "geolens/authcfg"
@@ -71,6 +77,9 @@ class QgisTransport:
                 name.encode("latin-1"), value.encode("latin-1")
             )
         if self.authcfg:
+            mismatch = auth_server_mismatch(self.authcfg, url)
+            if mismatch:
+                raise GeoLensError(mismatch)
             # Applied to this request only, not through setAuthCfg:
             # QgsBlockingNetworkRequest re-applies its auth config to every
             # redirect target, so a redirect to another host would get the key.
@@ -122,6 +131,41 @@ class QgisTransport:
         if error != QgsBlockingNetworkRequest.ErrorCode.NoError:
             raise OSError(blocking.errorMessage())
         return _Response(body)
+
+
+def auth_server_mismatch(authcfg: str, url: str, auth_manager=None) -> str:
+    """Why `authcfg` must not be sent to `url`, or "" when it may be.
+
+    A config may go only to the scheme, host and port of the server URL it
+    was saved with, the URI that `store_api_key` records.
+    """
+    auth_manager = auth_manager or QgsApplication.authManager()
+    loaded, config = auth_manager.loadAuthenticationConfig(
+        authcfg, QgsAuthMethodConfig(), False
+    )
+    saved_for = config.uri().strip() if loaded else ""
+    if saved_for and same_origin(saved_for, url):
+        return ""
+    target = _origin_label(url)
+    if saved_for:
+        return QCoreApplication.translate(
+            "GeoLens",
+            "The selected authentication configuration was saved for {saved}, "
+            "so GeoLens won't send it to {target}. Choose a configuration saved "
+            "for this server, or paste its API key.",
+        ).format(saved=_origin_label(saved_for), target=target)
+    return QCoreApplication.translate(
+        "GeoLens",
+        "The selected authentication configuration doesn't name a server, so "
+        "GeoLens won't send it to {target}. Set its URL to this GeoLens server "
+        "in the QGIS authentication settings, or choose another configuration.",
+    ).format(target=target)
+
+
+def _origin_label(url: str) -> str:
+    parsed = urlparse(with_default_scheme(url))
+    host = parsed.netloc.rpartition("@")[2]
+    return f"{parsed.scheme.lower()}://{host.lower()}" if host else url.strip()
 
 
 def _carries_credential(request: QNetworkRequest) -> bool:
